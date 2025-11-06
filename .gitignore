@@ -1,0 +1,16 @@
+frontend/node_modules/*
+frontend/node_modules/
+frontend/node_modules
+backend/venv/*
+backend/venv/
+backend/venv
+backend/tests/*
+backend/tests/
+backend/tests
+backend/app.db
+backend/results/*
+backend/results/
+backend/results
+backend/uploads/*
+backend/uploads/
+backend/uploads
