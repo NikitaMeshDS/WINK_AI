@@ -5,6 +5,16 @@ services:
     volumes:
       - ./backend/uploads:/app/uploads
       - ./backend/results:/app/results
+    depends_on:
+      - ml_app
+
+  ml_app:
+    build:
+      context: ./ML_app
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
 
   nginx:
     image: nginx:latest

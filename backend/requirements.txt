@@ -6,3 +6,4 @@ pydantic==2.7.0
 python-multipart==0.0.9
 pandas==2.3.3
 openpyxl==3.1.2
+requests

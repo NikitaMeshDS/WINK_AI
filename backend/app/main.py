@@ -14,6 +14,8 @@ import uuid
 from datetime import datetime
 from typing import List
 
+import pandas as pd
+import requests
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -21,7 +23,6 @@ from sqlalchemy.orm import Session
 
 from . import crud, models, schemas
 from .database import Base, engine, get_db
-from .ml_stub import process_script
 
 import zipfile
 
@@ -49,6 +50,31 @@ UPLOAD_ROOT = "uploads"
 RESULT_ROOT = "results"
 os.makedirs(UPLOAD_ROOT, exist_ok=True)
 os.makedirs(RESULT_ROOT, exist_ok=True)
+
+ML_API_URL = "http://ml_app:8000/analyze"
+
+
+def process_script(extract_dir: str, result_path: str) -> pd.DataFrame:
+    """
+    Process the script by calling the ML service.
+    """
+    docx_files = [f for f in os.listdir(extract_dir) if f.endswith(".docx")]
+    if not docx_files:
+        raise HTTPException(status_code=400, detail="No .docx file found in the archive.")
+
+    file_path = os.path.join(extract_dir, docx_files[0])
+
+    with open(file_path, "rb") as f:
+        files = {"file": (docx_files[0], f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
+        response = requests.post(ML_API_URL, files=files)
+
+    if response.status_code != 200:
+        raise HTTPException(status_code=response.status_code, detail=f"Error from ML service: {response.text}")
+
+    data = response.json()
+    df = pd.DataFrame(data)
+    df.to_excel(result_path, index=False)
+    return df
 
 
 @app.post("/upload", response_model=schemas.UploadResponse)
