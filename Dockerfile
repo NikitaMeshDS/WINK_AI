@@ -1,4 +1,3 @@
-
 FROM node:20 AS frontend-build
 WORKDIR /app/frontend
 

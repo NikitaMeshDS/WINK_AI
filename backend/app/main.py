@@ -51,7 +51,7 @@ RESULT_ROOT = "results"
 os.makedirs(UPLOAD_ROOT, exist_ok=True)
 os.makedirs(RESULT_ROOT, exist_ok=True)
 
-ML_API_URL = "http://ml_app:8000/analyze"
+ML_API_URL = os.getenv("ML_API_URL", "http://ml_app:8000/analyze")
 
 
 def process_script(extract_dir: str, result_path: str) -> pd.DataFrame:
