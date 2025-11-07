@@ -6,6 +6,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 import httpx
 import uvicorn
+from httpx_socks import AsyncProxyTransport # <--- ДОБАВЛЕН НОВЫЙ ИМПОРТ
 
 app = FastAPI()
 
@@ -87,17 +88,25 @@ def extract_json_from_output(output_text):
     except json.JSONDecodeError:
         return None
 
+# --- НАЧАЛО ИЗМЕНЕНИЙ ---
 async def extract_from_scene(scene_text, episode):
     if not API_KEY:
         raise HTTPException(status_code=500, detail="GROQ_API_KEY не установлен")
-    
+
     prompt = USER_PROMPT_TEMPLATE.format(scene_text=scene_text, episode=episode)
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": prompt}
     ]
+    
+    # Указываем URL вашего SOCKS5 прокси
+    proxy_url = "socks5://user314918:f2v1y5@45.159.183.80:8743"
+    
+    # Создаем специальный транспорт для httpx, который будет работать через SOCKS5 прокси
+    transport = AsyncProxyTransport.from_url(proxy_url)
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    # Инициализируем httpx.AsyncClient с нашим транспортом
+    async with httpx.AsyncClient(transport=transport, timeout=60.0) as client:
         try:
             response = await client.post(
                 API_URL,
@@ -119,13 +128,19 @@ async def extract_from_scene(scene_text, episode):
                     detail=f"Groq API error: {error_text}"
                 )
             result = response.json()
-            text = result["choices"][0]["message"]["content"]
+            text = result["choices"]["message"]["content"]
             return extract_json_from_output(text)
         except httpx.HTTPStatusError as e:
             error_detail = e.response.text if e.response else str(e)
             raise HTTPException(
                 status_code=e.response.status_code if e.response else 500,
                 detail=f"Groq API error: {error_detail}"
+            )
+        except Exception as e:
+            # Отлавливаем возможные ошибки подключения к прокси
+            raise HTTPException(
+                status_code=500,
+                detail=f"Ошибка при работе через прокси: {str(e)}"
             )
 
 async def process_text(text, episode):
@@ -141,22 +156,22 @@ async def process_text(text, episode):
 async def analyze_script(file: UploadFile = File(...)):
     if not file.filename.endswith('.docx'):
         raise HTTPException(status_code=400, detail="Файл должен быть в формате .docx")
-    
+
     try:
         file_content = await file.read()
         text = read_docx_text(file_content)
-        
+
         if not text or len(text.strip()) == 0:
             raise HTTPException(status_code=400, detail="Файл пуст или не удалось прочитать текст")
-        
+
         episode_match = re.search(r"(ПЕРВАЯ|ВТОРАЯ|ТРЕТЬЯ)\s+СЕРИЯ", text, re.IGNORECASE)
         episode = episode_match.group(1).capitalize() + " серия" if episode_match else "1"
-        
+
         if not API_KEY:
             raise HTTPException(status_code=500, detail="GROQ_API_KEY не установлен. Установи переменную окружения GROQ_API_KEY")
-        
+
         results = await process_text(text, episode)
-        
+
         return JSONResponse(content=results)
     except HTTPException:
         raise
@@ -168,5 +183,4 @@ async def health():
     return {"status": "ok"}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-
+    uvicorn.run(app, host="localhost", port=8000)
