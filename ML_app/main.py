@@ -84,7 +84,6 @@ def extract_json_from_output(output_text):
     except json.JSONDecodeError:
         return None
 
-# --- НАЧАЛО ИЗМЕНЕНИЙ ---
 async def extract_from_scene(scene_text, episode):
     if not API_KEY:
         raise HTTPException(status_code=500, detail="GROQ_API_KEY не установлен")
@@ -95,32 +94,26 @@ async def extract_from_scene(scene_text, episode):
         {"role": "user", "content": prompt}
     ]
     
-    # URL локального SOCKS5 прокси, который запущен через Xray на хост-машине.
-    # 172.17.0.1 - это стандартный IP адрес хоста изнутри Docker контейнера.
-    # Если ваше приложение запущено не в Docker или у вас другая конфигурация сети,
-    # используйте '127.0.0.1:1080'.
-    proxy_url = "socks5://172.17.0.1:1080"
+    # ИСПОЛЬЗУЕМ СПЕЦИАЛЬНОЕ DNS ИМЯ ДЛЯ ДОСТУПА К ХОСТУ ИЗНУТРИ DOCKER
+    proxy_url = "socks5://host.docker.internal:1080"
     
-    # Создаем транспорт для httpx, который будет направлять трафик через наш прокси
     transport = AsyncProxyTransport.from_url(proxy_url)
 
-    async with httpx.AsyncClient(transport=transport, timeout=120.0) as client: # Таймаут увеличен на всякий случай
+    async with httpx.AsyncClient(transport=transport, timeout=120.0) as client:
         try:
             response = await client.post(
                 API_URL,
                 headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
                 json={"model": MODEL, "messages": messages, "max_tokens": 512, "temperature": 0.0}
             )
-            response.raise_for_status() # Вызовет ошибку для статусов 4xx/5xx
+            response.raise_for_status()
             result = response.json()
             text = result["choices"][0]["message"]["content"]
             return extract_json_from_output(text)
         except httpx.HTTPStatusError as e:
             raise HTTPException(status_code=e.response.status_code, detail=f"Groq API error: {e.response.text}")
         except httpx.RequestError as e:
-            raise HTTPException(status_code=500, detail=f"Ошибка подключения к API через прокси: {e}")
-
-# --- КОНЕЦ ИЗМЕНЕНИЙ ---
+            raise HTTPException(status_code=500, detail=f"Ошибка подключения к API через прокси (host.docker.internal): {e}")
 
 async def process_text(text, episode):
     scenes = split_scenes(text)

@@ -54,27 +54,60 @@ os.makedirs(RESULT_ROOT, exist_ok=True)
 ML_API_URL = os.getenv("ML_API_URL", "http://ml_app:8000/analyze")
 
 
+# --- НАЧАЛО ИЗМЕНЕНИЙ ---
+# Функция полностью переписана для обработки нескольких файлов и объединения результатов
 def process_script(extract_dir: str, result_path: str) -> pd.DataFrame:
     """
-    Process the script by calling the ML service.
+    Process ALL docx scripts in the directory by calling the ML service
+    and concatenate the results into a single DataFrame.
     """
     docx_files = [f for f in os.listdir(extract_dir) if f.endswith(".docx")]
     if not docx_files:
-        raise HTTPException(status_code=400, detail="No .docx file found in the archive.")
+        raise HTTPException(status_code=400, detail="No .docx files found in the archive.")
 
-    file_path = os.path.join(extract_dir, docx_files[0])
+    all_dataframes = []
 
-    with open(file_path, "rb") as f:
-        files = {"file": (docx_files[0], f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
-        response = requests.post(ML_API_URL, files=files)
+    # Устанавливаем большой таймаут, так как обработка всех файлов может занять время.
+    # 300 секунд = 5 минут.
+    timeout = 300.0
 
-    if response.status_code != 200:
-        raise HTTPException(status_code=response.status_code, detail=f"Error from ML service: {response.text}")
+    # Проходим в цикле по КАЖДОМУ найденному .docx файлу
+    for docx_file in docx_files:
+        file_path = os.path.join(extract_dir, docx_file)
+        
+        try:
+            with open(file_path, "rb") as f:
+                files = {"file": (docx_file, f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
+                # Отправляем запрос с увеличенным таймаутом
+                response = requests.post(ML_API_URL, files=files, timeout=timeout)
 
-    data = response.json()
-    df = pd.DataFrame(data)
-    df.to_excel(result_path, index=False)
-    return df
+            # Проверяем, что ML сервис не вернул ошибку
+            if response.status_code != 200:
+                # Если есть ошибка, пробрасываем ее текст на фронтенд для отладки
+                raise HTTPException(status_code=response.status_code, detail=f"Error from ML service for file {docx_file}: {response.text}")
+
+            data = response.json()
+            # Убеждаемся, что ответ не пустой, прежде чем создавать DataFrame
+            if data:
+                df = pd.DataFrame(data)
+                all_dataframes.append(df)
+        
+        # Отлавливаем ошибки сети (например, если ML сервис недоступен или таймаут)
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(status_code=504, detail=f"ML service timed out or is unavailable: {e}")
+
+    # Если после обработки всех файлов не получили никаких данных
+    if not all_dataframes:
+        raise HTTPException(status_code=400, detail="ML service returned no data for any of the documents.")
+
+    # Объединяем все полученные DataFrame в один большой
+    final_df = pd.concat(all_dataframes, ignore_index=True)
+    
+    # Сохраняем итоговый файл
+    final_df.to_excel(result_path, index=False)
+    
+    return final_df
+# --- КОНЕЦ ИЗМЕНЕНИЙ ---
 
 
 @app.post("/upload", response_model=schemas.UploadResponse)
@@ -111,7 +144,7 @@ async def upload_script(
         # Clean up and return an error if the archive is invalid
         shutil.rmtree(upload_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail="Invalid ZIP archive.")
-    # Create result directory and process the script
+    # Create result directory and process the script (вызовется исправленная функция)
     result_file = os.path.join(RESULT_ROOT, f"{uid}.xlsx")
     df = process_script(extract_dir, result_file)
     data_json = df.to_dict(orient="records")
@@ -164,17 +197,9 @@ def download_excel(upload_id: int, db: Session = Depends(get_db)):
     return FileResponse(record.result_path, filename=os.path.basename(record.result_path))
 
 
-# Attempt to serve the built frontend if it exists.  This enables
-# running a single container that serves both the API and the static
-# assets produced by Vite.  When the `dist` folder isn't present
-# (e.g. during development), the middleware silently fails and only
-# API routes remain available.
+# Attempt to serve the built frontend if it exists.
+from fastapi.staticfiles import StaticFiles
 
-from fastapi.staticfiles import StaticFiles  # type: ignore
-
-# Compute the path to the built frontend.  `__file__` points to
-# `backend/app/main.py`, so moving up one directory gives `/app/app` in
-# the container.  The built frontend is located at `/app/frontend/dist`.
 frontend_dist = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 if os.path.isdir(frontend_dist):
     app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="static")
