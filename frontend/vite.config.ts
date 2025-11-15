@@ -9,19 +9,19 @@ export default defineConfig(({ mode }) => {
       // Proxy API requests during development to the backend
       proxy: {
         '/upload': {
-          target: 'http://localhost:8000',
+          target: 'http://backend:8000',
           changeOrigin: true,
         },
         '/history': {
-          target: 'http://localhost:8000',
+          target: 'http://backend:8000',
           changeOrigin: true,
         },
         '/result': {
-          target: 'http://localhost:8000',
+          target: 'http://backend:8000',
           changeOrigin: true,
         },
         '/download': {
-          target: 'http://localhost:8000',
+          target: 'http://backend:8000',
           changeOrigin: true,
         },
       },

@@ -10,6 +10,7 @@ const Home: React.FC = () => {
   const [showCanvas, setShowCanvas] = useState(false);
 
   const handleUploadComplete = (data: UploadResponse) => {
+    console.log('Data received on frontend:', JSON.stringify(data, null, 2));
     setResult(data);
     setShowCanvas(false);
   };

@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import uuid
+import logging
 from datetime import datetime
 from typing import List
 
@@ -26,12 +27,17 @@ from .database import Base, engine, get_db
 
 import zipfile
 
+# --- Logging Setup ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("Backend")
+# --- End Logging Setup ---
+
 # Create all tables if they do not exist
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="Preproduction Table Service",
-    description="Upload a zipped film script and receive a structured preproduction table.",
+    description="Upload a film script (.docx or .zip) and receive a structured preproduction table.",
 )
 
 # Allow requests from any origin during development.  In production you
@@ -51,29 +57,50 @@ RESULT_ROOT = "results"
 os.makedirs(UPLOAD_ROOT, exist_ok=True)
 os.makedirs(RESULT_ROOT, exist_ok=True)
 
-ML_API_URL = "http://ml_app:8000/analyze"
+ML_API_URL = "http://host.docker.internal:8000"
 
 
-def process_script(extract_dir: str, result_path: str) -> pd.DataFrame:
+def process_docx_file(docx_path: str, result_path: str) -> pd.DataFrame:
     """
-    Process the script by calling the ML service.
+    Process a .docx script file by calling the ML service.
     """
-    docx_files = [f for f in os.listdir(extract_dir) if f.endswith(".docx")]
-    if not docx_files:
-        raise HTTPException(status_code=400, detail="No .docx file found in the archive.")
+    logger.info(f"Processing .docx file: {docx_path}. Sending to ML service at {ML_API_URL}")
+    
+    file_name = os.path.basename(docx_path)
 
-    file_path = os.path.join(extract_dir, docx_files[0])
-
-    with open(file_path, "rb") as f:
-        files = {"file": (docx_files[0], f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
-        response = requests.post(ML_API_URL, files=files)
+    with open(docx_path, "rb") as f:
+        files = {"file": (file_name, f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
+        # The ML service endpoint is /analyze
+        ml_service_url = f"{ML_API_URL}/analyze"
+        response = requests.post(ml_service_url, files=files)
 
     if response.status_code != 200:
+        logger.error(f"Error from ML service. Status: {response.status_code}, Body: {response.text}")
         raise HTTPException(status_code=response.status_code, detail=f"Error from ML service: {response.text}")
 
-    data = response.json()
+    logger.info("Successfully received response from ML service.")
+    
+    try:
+        data = response.json()
+        # In the ML app, the actual scene data is returned directly, not nested.
+        # If the response is {"status": "success", "scenes_processed": N}, we need to call /result
+        if isinstance(data, dict) and "scenes_processed" in data:
+             logger.info("ML service returned a status object, fetching full results from /result endpoint.")
+             result_url = f"{ML_API_URL}/result"
+             response = requests.get(result_url)
+             if response.status_code != 200:
+                 logger.error(f"Error fetching results from ML service. Status: {response.status_code}, Body: {response.text}")
+                 raise HTTPException(status_code=response.status_code, detail=f"Error fetching results from ML service: {response.text}")
+             data = response.json()
+
+        logger.info(f"Received JSON data from ML service: {json.dumps(data, ensure_ascii=False, indent=2)}")
+    except json.JSONDecodeError:
+        logger.error(f"Failed to decode JSON from ML service response. Response text: {response.text}")
+        raise HTTPException(status_code=500, detail="Invalid JSON response from ML service.")
+
     df = pd.DataFrame(data)
     df.to_excel(result_path, index=False)
+    logger.info(f"Successfully created and saved Excel file to {result_path}")
     return df
 
 
@@ -83,40 +110,63 @@ async def upload_script(
 ) -> schemas.UploadResponse:
     """
     Handle a new script upload.
-
-    Expects a ZIP file uploaded as form data.  The file is saved to a
-    unique directory, extracted, passed to the processing stub and then
-    persisted in the database along with the generated result.
-
-    Returns the upload identifier and the table contents as JSON.
+    Accepts a .zip or .docx file, processes the script, and returns the result.
     """
-    filename = file.filename or "uploaded.zip"
-    if not filename.lower().endswith(".zip"):
-        raise HTTPException(status_code=400, detail="Only ZIP archives are supported.")
+    filename = file.filename or "uploaded_file"
+    logger.info(f"--- New upload request for file: {filename} ---")
+
+    # Check for allowed file types
+    is_zip = filename.lower().endswith(".zip")
+    is_docx = filename.lower().endswith(".docx")
+
+    if not is_zip and not is_docx:
+        logger.warning(f"Upload rejected: File '{filename}' is not a .zip or .docx archive.")
+        raise HTTPException(status_code=400, detail="Only .zip and .docx files are supported.")
+
     uid = uuid.uuid4().hex
     upload_dir = os.path.join(UPLOAD_ROOT, uid)
     os.makedirs(upload_dir, exist_ok=True)
-    file_path = os.path.join(upload_dir, filename)
-    # Save the uploaded file to disk
-    with open(file_path, "wb") as f:
+    saved_file_path = os.path.join(upload_dir, filename)
+    
+    logger.info(f"Saving uploaded file to: {saved_file_path}")
+    with open(saved_file_path, "wb") as f:
         contents = await file.read()
         f.write(contents)
-    # Extract the archive
-    extract_dir = os.path.join(upload_dir, "extracted")
-    os.makedirs(extract_dir, exist_ok=True)
-    try:
-        with zipfile.ZipFile(file_path, "r") as zip_ref:
-            zip_ref.extractall(extract_dir)
-    except zipfile.BadZipFile:
-        # Clean up and return an error if the archive is invalid
-        shutil.rmtree(upload_dir, ignore_errors=True)
-        raise HTTPException(status_code=400, detail="Invalid ZIP archive.")
-    # Create result directory and process the script
+    
+    docx_to_process_path = ""
+
+    if is_zip:
+        extract_dir = os.path.join(upload_dir, "extracted")
+        os.makedirs(extract_dir, exist_ok=True)
+        logger.info(f"Extracting archive to: {extract_dir}")
+        try:
+            with zipfile.ZipFile(saved_file_path, "r") as zip_ref:
+                zip_ref.extractall(extract_dir)
+        except zipfile.BadZipFile:
+            logger.error(f"Invalid ZIP archive uploaded: {filename}")
+            shutil.rmtree(upload_dir, ignore_errors=True)
+            raise HTTPException(status_code=400, detail="Invalid ZIP archive.")
+        
+        # Find the .docx file in the extracted archive
+        docx_files = [f for f in os.listdir(extract_dir) if f.lower().endswith(".docx")]
+        if not docx_files:
+            logger.error(f"No .docx file found in the archive: {filename}")
+            shutil.rmtree(upload_dir, ignore_errors=True)
+            raise HTTPException(status_code=400, detail="No .docx file found in the zip archive.")
+        
+        docx_to_process_path = os.path.join(extract_dir, docx_files[0])
+
+    elif is_docx:
+        docx_to_process_path = saved_file_path
+
+    # Process the determined .docx file
     result_file = os.path.join(RESULT_ROOT, f"{uid}.xlsx")
-    df = process_script(extract_dir, result_file)
+    df = process_docx_file(docx_to_process_path, result_file)
     data_json = df.to_dict(orient="records")
-    # Persist to database
+    
+    logger.info("Saving upload record to the database.")
     record = crud.create_upload(db, filename=filename, result_path=result_file, data_json=data_json)
+    logger.info(f"Upload complete. Returning response for ID: {record.id}")
     return schemas.UploadResponse(id=record.id, data=data_json)
 
 
@@ -131,14 +181,10 @@ def list_uploads(db: Session = Depends(get_db)) -> List[schemas.UploadInfo]:
 def get_result(upload_id: int, db: Session = Depends(get_db)) -> schemas.UploadDetail:
     """
     Retrieve the processed table for a given upload.
-
-    If the upload does not exist an HTTP 404 error is raised.  The
-    response includes a download URL for the Excel file.
     """
     record = crud.get_upload(db, upload_id)
     if not record:
         raise HTTPException(status_code=404, detail="Upload not found.")
-    # Convert JSON string back to list of dicts
     try:
         data = json.loads(record.data_json)
     except json.JSONDecodeError:
@@ -164,17 +210,9 @@ def download_excel(upload_id: int, db: Session = Depends(get_db)):
     return FileResponse(record.result_path, filename=os.path.basename(record.result_path))
 
 
-# Attempt to serve the built frontend if it exists.  This enables
-# running a single container that serves both the API and the static
-# assets produced by Vite.  When the `dist` folder isn't present
-# (e.g. during development), the middleware silently fails and only
-# API routes remain available.
+# Attempt to serve the built frontend if it exists
+from fastapi.staticfiles import StaticFiles
 
-from fastapi.staticfiles import StaticFiles  # type: ignore
-
-# Compute the path to the built frontend.  `__file__` points to
-# `backend/app/main.py`, so moving up one directory gives `/app/app` in
-# the container.  The built frontend is located at `/app/frontend/dist`.
 frontend_dist = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 if os.path.isdir(frontend_dist):
     app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="static")

@@ -25,7 +25,7 @@ class UploadResponse(BaseModel):
     data: List[dict]
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class UploadInfo(BaseModel):
@@ -36,7 +36,7 @@ class UploadInfo(BaseModel):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class UploadDetail(BaseModel):
@@ -49,4 +49,4 @@ class UploadDetail(BaseModel):
     download_url: str
 
     class Config:
-        orm_mode = True
+        from_attributes = True

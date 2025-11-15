@@ -14,8 +14,9 @@ const UploadForm: React.FC<UploadFormProps> = ({ onUploadComplete }) => {
 
   const handleFile = useCallback(
     async (file: File) => {
-      if (!file || !file.name.toLowerCase().endsWith('.zip')) {
-        setError('Please select a valid ZIP archive.');
+      const isAccepted = file && (file.name.toLowerCase().endsWith('.zip') || file.name.toLowerCase().endsWith('.docx'));
+      if (!isAccepted) {
+        setError('Please select a valid .zip or .docx file.');
         return;
       }
       setIsLoading(true);
@@ -80,14 +81,14 @@ const UploadForm: React.FC<UploadFormProps> = ({ onUploadComplete }) => {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".zip"
+            accept=".zip,.docx"
             className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
             onChange={handleChange}
             disabled={isLoading}
           />
           <div className="space-y-2">
             <p className="text-lg font-semibold">
-              Drag & Drop your ZIP file here
+              Drag & Drop your .zip or .docx file here
             </p>
             <p className="text-muted-foreground">or</p>
             <motion.button
