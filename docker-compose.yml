@@ -1,28 +1,37 @@
 version: '3.8'
+
 services:
-  winkai:
-    build: .
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
     volumes:
       - ./backend/uploads:/app/uploads
       - ./backend/results:/app/results
+      - ./backend/app.db:/app/app.db
     depends_on:
       - ml_app
+    networks:
+      - winkai-net
 
   ml_app:
     build:
       context: ./ML_app
-    env_file:
-      - .env
-    ports:
-      - "8000:8000"
+      dockerfile: Dockerfile
+    # Для доступа к GPU, раскомментируйте секцию 'deploy'
+    # и убедитесь, что у вас установлен NVIDIA Container Toolkit.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    networks:
+      - winkai-net
 
-  nginx:
-    image: nginx:latest
-    ports:
-      - "8080:80"
-      - "8443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf
-      - ./nginx/ssl:/etc/nginx/ssl
-    depends_on:
-      - winkai
+networks:
+  winkai-net:
+    driver: bridge
