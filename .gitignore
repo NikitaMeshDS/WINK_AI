@@ -16,3 +16,4 @@ backend/uploads/
 backend/uploads
 .env
 ML_app/.env
+.env
