@@ -60,48 +60,86 @@ os.makedirs(RESULT_ROOT, exist_ok=True)
 ML_API_URL = "http://host.docker.internal:8000"
 
 
-def process_docx_file(docx_path: str, result_path: str) -> pd.DataFrame:
+def process_docx_file(docx_path: str, result_path: str) -> dict:
     """
     Process a .docx script file by calling the ML service.
     """
     logger.info(f"Processing .docx file: {docx_path}. Sending to ML service at {ML_API_URL}")
     
-    file_name = os.path.basename(docx_path)
+    # file_name = os.path.basename(docx_path)
 
-    with open(docx_path, "rb") as f:
-        files = {"file": (file_name, f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
-        # The ML service endpoint is /analyze
-        ml_service_url = f"{ML_API_URL}/analyze"
-        response = requests.post(ml_service_url, files=files)
+    # with open(docx_path, "rb") as f:
+    #     files = {"file": (file_name, f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
+    #     # The ML service endpoint is /analyze
+    #     ml_service_url = f"{ML_API_URL}/analyze"
+    #     response = requests.post(ml_service_url, files=files)
 
-    if response.status_code != 200:
-        logger.error(f"Error from ML service. Status: {response.status_code}, Body: {response.text}")
-        raise HTTPException(status_code=response.status_code, detail=f"Error from ML service: {response.text}")
+    # if response.status_code != 200:
+    #     logger.error(f"Error from ML service. Status: {response.status_code}, Body: {response.text}")
+    #     raise HTTPException(status_code=response.status_code, detail=f"Error from ML service: {response.text}")
 
-    logger.info("Successfully received response from ML service.")
+    # logger.info("Successfully received response from ML service.")
     
-    try:
-        data = response.json()
-        # In the ML app, the actual scene data is returned directly, not nested.
-        # If the response is {"status": "success", "scenes_processed": N}, we need to call /result
-        if isinstance(data, dict) and "scenes_processed" in data:
-             logger.info("ML service returned a status object, fetching full results from /result endpoint.")
-             result_url = f"{ML_API_URL}/result"
-             response = requests.get(result_url)
-             if response.status_code != 200:
-                 logger.error(f"Error fetching results from ML service. Status: {response.status_code}, Body: {response.text}")
-                 raise HTTPException(status_code=response.status_code, detail=f"Error fetching results from ML service: {response.text}")
-             data = response.json()
+    # try:
+    #     # NOTE: When re-enabling Runpod, the ML service's /analyze endpoint will
+    #     # return the data directly, so the logic below that checks for
+    #     # 'scenes_processed' and calls /result will no longer be needed.
+    #     data = response.json()
+    #     # In the ML app, the actual scene data is returned directly, not nested.
+    #     # If the response is {"status": "success", "scenes_processed": N}, we need to call /result
+    #     if isinstance(data, dict) and "scenes_processed" in data:
+    #          logger.info("ML service returned a status object, fetching full results from /result endpoint.")
+    #          result_url = f"{ML_API_URL}/result"
+    #          response = requests.get(result_url)
+    #          if response.status_code != 200:
+    #              logger.error(f"Error fetching results from ML service. Status: {response.status_code}, Body: {response.text}")
+    #              raise HTTPException(status_code=response.status_code, detail=f"Error fetching results from ML service: {response.text}")
+    #          data = response.json()
 
-        logger.info(f"Received JSON data from ML service: {json.dumps(data, ensure_ascii=False, indent=2)}")
-    except json.JSONDecodeError:
-        logger.error(f"Failed to decode JSON from ML service response. Response text: {response.text}")
-        raise HTTPException(status_code=500, detail="Invalid JSON response from ML service.")
+    #     logger.info(f"Received JSON data from ML service: {json.dumps(data, ensure_ascii=False, indent=2)}")
+    # except json.JSONDecodeError:
+    #     logger.error(f"Failed to decode JSON from ML service response. Response text: {response.text}")
+    #     raise HTTPException(status_code=500, detail="Invalid JSON response from ML service.")
 
-    df = pd.DataFrame(data)
-    df.to_excel(result_path, index=False)
+    # Mock data generation
+    data = {}
+    for i in range(1, 11):
+        series_name = f"Серия {i}"
+        data[series_name] = []
+        for j in range(1, 6):
+            scene_data = {
+                "Серия": f"{i}",
+                "Сцена": f"{j}",
+                "Режим": "День",
+                "Инт / нат": "ИНТ.",
+                "Объект": f"Локация {j}",
+                "Подобъект": "",
+                "Синопсис": f"Синопсис для сцены {j} серии {i}",
+                "Персонажи": ["Персонаж 1", "Персонаж 2"],
+                "Каскадер / Пиротехник": "",
+                "Актеры": ["Актер 1", "Актер 2"],
+                "Примечание": "",
+                "Массовка": "",
+                "Групповка": "",
+                "Животное": "",
+                "Грим": "",
+                "Костюм": "",
+                "Реквизит": "",
+                "Игровой транспорт": ""
+            }
+            # Make day optional for series 3 and 7
+            if i not in [3, 7]:
+                scene_data["День"] = f"{(i-1)*5 + j}"
+            
+            data[series_name].append(scene_data)
+
+    with pd.ExcelWriter(result_path) as writer:
+        for series_name, scene_data in data.items():
+            df = pd.DataFrame(scene_data)
+            df.to_excel(writer, sheet_name=series_name, index=False)
+    
     logger.info(f"Successfully created and saved Excel file to {result_path}")
-    return df
+    return data
 
 
 @app.post("/upload", response_model=schemas.UploadResponse)
@@ -161,13 +199,12 @@ async def upload_script(
 
     # Process the determined .docx file
     result_file = os.path.join(RESULT_ROOT, f"{uid}.xlsx")
-    df = process_docx_file(docx_to_process_path, result_file)
-    data_json = df.to_dict(orient="records")
+    data = process_docx_file(docx_to_process_path, result_file)
     
     logger.info("Saving upload record to the database.")
-    record = crud.create_upload(db, filename=filename, result_path=result_file, data_json=data_json)
+    record = crud.create_upload(db, filename=filename, result_path=result_file, data_json=data)
     logger.info(f"Upload complete. Returning response for ID: {record.id}")
-    return schemas.UploadResponse(id=record.id, data=data_json)
+    return schemas.UploadResponse(id=record.id, data=data)
 
 
 @app.get("/history", response_model=List[schemas.UploadInfo])
@@ -188,7 +225,7 @@ def get_result(upload_id: int, db: Session = Depends(get_db)) -> schemas.UploadD
     try:
         data = json.loads(record.data_json)
     except json.JSONDecodeError:
-        data = []
+        data = {}
     download_url = f"/download/{record.id}"
     return schemas.UploadDetail(
         id=record.id,
@@ -207,7 +244,10 @@ def download_excel(upload_id: int, db: Session = Depends(get_db)):
     record = crud.get_upload(db, upload_id)
     if not record:
         raise HTTPException(status_code=404, detail="Upload not found.")
-    return FileResponse(record.result_path, filename=os.path.basename(record.result_path))
+    
+    download_filename = f"сценарий_{record.id}.xlsx"
+    
+    return FileResponse(record.result_path, filename=download_filename)
 
 
 # Attempt to serve the built frontend if it exists

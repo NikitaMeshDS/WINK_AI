@@ -14,7 +14,7 @@ from . import models
 
 
 def create_upload(
-    db: Session, filename: str, result_path: str, data_json: list
+    db: Session, filename: str, result_path: str, data_json: dict
 ) -> models.Upload:
     """Insert a new upload entry into the database."""
     obj = models.Upload(

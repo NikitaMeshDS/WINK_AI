@@ -22,7 +22,7 @@ class UploadResponse(BaseModel):
     """
 
     id: int
-    data: List[dict]
+    data: dict
 
     class Config:
         from_attributes = True
@@ -45,7 +45,7 @@ class UploadDetail(BaseModel):
     id: int
     filename: str
     created_at: datetime
-    data: List[dict]
+    data: dict
     download_url: str
 
     class Config:

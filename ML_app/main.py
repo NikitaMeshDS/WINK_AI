@@ -40,21 +40,25 @@ USER_PROMPT_TEMPLATE = """
 Проанализируй следующую сцену и заполни строго этот JSON-шаблон:
 
 {{
+  "День": "{day}",
   "Серия": "{episode}",
-  "НомерСцены": "",
-  "Режим": "",
-  "Объект": "",
+  "Сцена": "{scene_number}",
+  "Режим": "{time_of_day}",
+  "Инт / нат": "{int_ext}",
+  "Объект": "{location}",
   "Подобъект": "",
   "Синопсис": "",
   "Персонажи": [],
-  "Массовка/Группировка": "",
-  "Грим/Костюм": "",
-  "Реквизит/Игровой транспорт/Животное": "",
-  "Декорация": "",
-  "Каскадёр/Трюк": "",
-  "Администрация/Спецэффект": "",
-  "Операторская техника": "",
-  "Лед экраны": ""
+  "Каскадер / Пиротехник": "",
+  "Актеры": [],
+  "Примечание": "",
+  "Массовка": "",
+  "Групповка": "",
+  "Животное": "",
+  "Грим": "",
+  "Костюм": "",
+  "Реквизит": "",
+  "Игровой транспорт": ""
 }}
 
 Текст сцены:
@@ -146,13 +150,16 @@ def extract_from_scene(scene_text, episode):
 
 def process_text(text, episode):
     scenes = split_scenes(text)
-    results = []
+    results = {}
     logger.info(f"Found {len(scenes)} scenes to process.")
     for i, scene in enumerate(scenes, start=1):
         logger.info(f"--- Processing scene {i}/{len(scenes)} ---")
         data = extract_from_scene(scene, episode)
         if data:
-            results.append(data)
+            series = data.get("Серия", "1")
+            if series not in results:
+                results[series] = []
+            results[series].append(data)
     logger.info(f"Finished processing text. Extracted data for {len(results)} scenes.")
     return results
 
@@ -172,7 +179,6 @@ async def analyze_script(file: UploadFile = File(...)):
         file_content = await file.read()
         text = read_docx_text(file_content)
         logger.info(f"--- Full text from DOCX ---\n{text}\n--- End of text ---")
-        logger.info(f"--- Full text from DOCX ---\n{text}\n--- End of text ---")
 
         if not text or len(text.strip()) == 0:
             raise HTTPException(status_code=400, detail="Файл пуст или не удалось прочитать текст")
@@ -187,8 +193,8 @@ async def analyze_script(file: UploadFile = File(...)):
         stored_results = results
         logger.info(f"Analysis complete. Processed {len(results)} scenes successfully.")
 
-        # удалить нижнию строку
-        return JSONResponse(content={"status": "success", "scenes_processed": len(results)})
+        # The response now returns the full data, not just a status.
+        return JSONResponse(content=results)
     except HTTPException:
         raise
     except Exception as e:

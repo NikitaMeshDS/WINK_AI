@@ -7,7 +7,7 @@
  */
 export interface UploadResponse {
   id: number;
-  data: Array<Record<string, any>>;
+  data: Record<string, Array<Record<string, any>>>;
 }
 
 export interface UploadInfo {
@@ -20,7 +20,7 @@ export interface UploadDetail {
   id: number;
   filename: string;
   created_at: string;
-  data: Array<Record<string, any>>;
+  data: Record<string, Array<Record<string, any>>>;
   download_url: string;
 }
 
