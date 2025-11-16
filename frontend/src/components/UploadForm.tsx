@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { uploadScript, UploadResponse } from '../api';
 
 interface UploadFormProps {
-  onUploadComplete: (data: UploadResponse) => void;
+  onUploadComplete: (data: UploadResponse, filename: string) => void;
 }
 
 const UploadForm: React.FC<UploadFormProps> = ({ onUploadComplete }) => {
@@ -23,7 +23,7 @@ const UploadForm: React.FC<UploadFormProps> = ({ onUploadComplete }) => {
       setError(null);
       try {
         const data = await uploadScript(file);
-        onUploadComplete(data);
+        onUploadComplete(data, file.name);
       } catch (err: any) {
         setError(err.message || 'File upload failed.');
       } finally {

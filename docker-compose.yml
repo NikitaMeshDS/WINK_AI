@@ -21,7 +21,7 @@ services:
     ports:
       - '8000:8000'
     environment:
-      - ML_API_URL=http://host.docker.internal:8000
+      - ML_API_URL=https://v672ahj5imtgdl-8000.proxy.runpod.net
     volumes:
       - ./backend:/app/backend
       - ./backend/uploads:/app/uploads

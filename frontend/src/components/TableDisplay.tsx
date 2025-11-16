@@ -29,7 +29,30 @@ const TableDisplay: React.FC<TableDisplayProps> = ({ data }) => {
   }
 
   const selectedData = (selectedShow && selectedSeries && data[selectedShow]?.[selectedSeries]) || [];
-  const columns = selectedData.length > 0 ? Object.keys(selectedData[0]) : [];
+  
+  const allPossibleColumns = selectedData.length > 0 ? Object.keys(selectedData[0]) : [];
+
+  const filteredColumns = useMemo(() => {
+    if (selectedData.length === 0) {
+      return [];
+    }
+    return allPossibleColumns.filter(col => 
+      selectedData.some(row => {
+        const value = row[col];
+        // Check for non-null, non-undefined, non-empty string, non-empty array
+        if (value === null || value === undefined) {
+          return false;
+        }
+        if (typeof value === 'string' && value.trim() === '') {
+          return false;
+        }
+        if (Array.isArray(value) && value.length === 0) {
+          return false;
+        }
+        return true;
+      })
+    );
+  }, [selectedData, allPossibleColumns]);
 
   return (
     <div className="w-full space-y-4">
@@ -79,7 +102,7 @@ const TableDisplay: React.FC<TableDisplayProps> = ({ data }) => {
         <table className="min-w-full divide-y divide-border">
           <thead className="bg-muted/50">
             <tr>
-              {columns.map((col) => (
+              {filteredColumns.map((col) => (
                 <th
                   key={col}
                   className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider"
@@ -92,9 +115,26 @@ const TableDisplay: React.FC<TableDisplayProps> = ({ data }) => {
           <tbody className="divide-y divide-border bg-background">
             {selectedData.map((row, idx) => (
               <tr key={idx} className="hover:bg-muted/50">
-                {columns.map((col) => (
+                {filteredColumns.map((col) => (
                   <td key={col} className="px-4 py-3 whitespace-pre-wrap text-sm">
-                    {String(row[col] ?? '')}
+                    {(() => {
+                      const cellValue = row[col];
+                      if (col === 'Персонажи' || col === 'Актеры') {
+                        if (Array.isArray(cellValue)) {
+                          return cellValue.map((item: any) => {
+                            if (typeof item === 'object' && item !== null && 'Имя' in item) {
+                              return item.Имя;
+                            }
+                            return String(item);
+                          }).filter(Boolean).join(', ');
+                        }
+                      } else if (col === 'Реквизит') {
+                        if (Array.isArray(cellValue)) {
+                          return cellValue.join(', ');
+                        }
+                      }
+                      return String(cellValue ?? '');
+                    })()}
                   </td>
                 ))}
               </tr>

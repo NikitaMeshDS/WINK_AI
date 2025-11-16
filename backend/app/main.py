@@ -26,6 +26,7 @@ from . import crud, models, schemas
 from .database import Base, engine, get_db
 
 import zipfile
+import re
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -59,6 +60,17 @@ os.makedirs(RESULT_ROOT, exist_ok=True)
 
 # ML service URL, configurable via environment variables
 ML_API_URL = os.environ.get("ML_API_URL", "http://host.docker.internal:8000")
+
+
+def get_numeric_series_key(series_name: str) -> int:
+    """
+    Extracts a numeric key from a series name for sorting purposes.
+    Prioritizes leading numbers, otherwise returns a high value.
+    """
+    match = re.match(r'^\d+', series_name)
+    if match:
+        return int(match.group(0))
+    return 9999 # A large number to put non-numeric series at the end
 
 
 import glob
@@ -189,13 +201,16 @@ async def upload_script(
         
         all_aggregated_data[show_name] = show_data
         
-        series_items = sorted(list(show_data.items()), key=lambda x: int(x[0].split(" ")[1]))
+        series_items = sorted(
+            list(show_data.items()), 
+            key=lambda x: get_numeric_series_key(x[0])
+        )
         
         # Split into chunks of 20 series per Excel file
         for i in range(0, len(series_items), 20):
             chunk = series_items[i:i+20]
-            start_series = chunk[0][0].split(" ")[1]
-            end_series = chunk[-1][0].split(" ")[1]
+            start_series = chunk[0][0]
+            end_series = chunk[-1][0]
             
             excel_filename = f"{show_name}_серии_{start_series}-{end_series}.xlsx"
             excel_path = os.path.join(output_files_dir, excel_filename)
@@ -211,6 +226,34 @@ async def upload_script(
     summary_path = os.path.join(output_files_dir, "Итог.xlsx")
     create_summary_excel(all_aggregated_data, summary_path)
     generated_excel_paths.append(summary_path)
+
+    # Separate content Excel files from the summary file
+    content_excel_paths = [p for p in generated_excel_paths if not os.path.basename(p).startswith("Итог")]
+    summary_excel_path = next((p for p in generated_excel_paths if os.path.basename(p).startswith("Итог")), None)
+
+    if len(content_excel_paths) == 1 and summary_excel_path:
+        # Scenario: One content Excel file and a summary file. Merge them.
+        main_excel_path = content_excel_paths[0]
+        
+        logger.info(f"Merging summary into {main_excel_path}...")
+        
+        try:
+            # Load summary data
+            summary_df = pd.read_excel(summary_excel_path)
+
+            # Append summary as a new sheet to the main Excel file
+            with pd.ExcelWriter(main_excel_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
+                summary_df.to_excel(writer, sheet_name='Итог', index=False)
+            
+            logger.info(f"Successfully merged summary into {main_excel_path}")
+            
+            # Remove the separate summary file
+            os.remove(summary_excel_path)
+            generated_excel_paths = [main_excel_path] # Update the list to only contain the merged file
+        except Exception as e:
+            logger.error(f"Failed to merge summary into {main_excel_path}: {e}")
+            # If merging fails, proceed with zipping both files as a fallback
+            pass # The original generated_excel_paths will be used for zipping
 
     # Decide final result path (single excel or zip)
     final_result_path = ""

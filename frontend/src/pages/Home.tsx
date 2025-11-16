@@ -9,13 +9,17 @@ const Home: React.FC = () => {
   const [result, setResult] = useState<UploadResponse | null>(null);
   const [showCanvas, setShowCanvas] = useState(false);
 
-  const handleUploadComplete = (data: UploadResponse) => {
+  const handleUploadComplete = (data: UploadResponse, filename: string) => {
     console.log('Data received on frontend:', JSON.stringify(data, null, 2));
-    // Extract filename without extension to use as show name
-    const showName = data.filename.split('.').slice(0, -1).join('.');
-    // Wrap the data.data into the expected format for TableDisplay
-    const formattedData = { [showName]: data.data };
-    setResult({ ...data, data: formattedData }); // Update result with formatted data
+    const showName = filename.split('.').slice(0, -1).join('.');
+    
+    // The backend returns data in the format { "UUID": { "1": [...] } }
+    // We need to transform it to { "showName": { "1": [...] } } for TableDisplay
+    const uuidKey = Object.keys(data.data)[0];
+    const seriesData = data.data[uuidKey];
+    const formattedData = { [showName]: seriesData };
+
+    setResult({ ...data, data: formattedData });
     setShowCanvas(false);
   };
 

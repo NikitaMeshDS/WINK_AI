@@ -40,12 +40,12 @@ USER_PROMPT_TEMPLATE = """
 Проанализируй следующую сцену и заполни строго этот JSON-шаблон:
 
 {{
-  "День": "{day}",
+  "День": "",
   "Серия": "{episode}",
-  "Сцена": "{scene_number}",
-  "Режим": "{time_of_day}",
-  "Инт / нат": "{int_ext}",
-  "Объект": "{location}",
+  "Сцена": "",
+  "Режим": "",
+  "Инт / нат": "",
+  "Объект": "",
   "Подобъект": "",
   "Синопсис": "",
   "Персонажи": [],
@@ -102,6 +102,8 @@ def extract_json_from_output(output_text):
     json_str = json_str.replace("'}", "}")
     json_str = re.sub(r",\s*}", "}", json_str)
     json_str = re.sub(r",\s*]", "]", json_str)
+    # Attempt to fix missing commas between objects in an array
+    json_str = re.sub(r'}\s*{', '},{', json_str)
 
     try:
         # Log the extracted JSON for verification
