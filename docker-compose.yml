@@ -6,7 +6,7 @@ services:
     working_dir: /app/frontend
     command: sh -c "npm install && npm run dev -- --host"
     ports:
-      - "5173:5173"
+      - '5173:5173'
     volumes:
       - ./frontend:/app/frontend
     networks:
@@ -19,9 +19,9 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - '8000:8000'
     environment:
-      - ML_API_URL=http://69.30.85.136:8888
+      - ML_API_URL=http://host.docker.internal:8000
     volumes:
       - ./backend:/app/backend
       - ./backend/uploads:/app/uploads
@@ -30,7 +30,7 @@ services:
     networks:
       - winkai-net
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - 'host.docker.internal:host-gateway'
 
 networks:
   winkai-net:
