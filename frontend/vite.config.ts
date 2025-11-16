@@ -11,6 +11,7 @@ export default defineConfig(({ mode }) => {
         '/upload': {
           target: 'http://backend:8000',
           changeOrigin: true,
+          timeout: 600000,
         },
         '/history': {
           target: 'http://backend:8000',
