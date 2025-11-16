@@ -11,6 +11,7 @@ const UploadForm: React.FC<UploadFormProps> = ({ onUploadComplete }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [progressMessage, setProgressMessage] = useState<string | null>(null);
 
   const handleFile = useCallback(
     async (file: File) => {
@@ -21,13 +22,17 @@ const UploadForm: React.FC<UploadFormProps> = ({ onUploadComplete }) => {
       }
       setIsLoading(true);
       setError(null);
+      setProgressMessage('Uploading file...');
       try {
         const data = await uploadScript(file);
+        setProgressMessage('Processing data...'); // This message will be shown after upload, before onUploadComplete
         onUploadComplete(data, file.name);
       } catch (err: any) {
         setError(err.message || 'File upload failed.');
+        setProgressMessage(null);
       } finally {
         setIsLoading(false);
+        setProgressMessage(null);
       }
     },
     [onUploadComplete],
@@ -87,20 +92,33 @@ const UploadForm: React.FC<UploadFormProps> = ({ onUploadComplete }) => {
             disabled={isLoading}
           />
           <div className="space-y-2">
-            <p className="text-lg font-semibold">
-              Drag & Drop your .zip or .docx file here
-            </p>
-            <p className="text-muted-foreground">or</p>
-            <motion.button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isLoading}
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              className="px-6 py-2 font-semibold text-primary-foreground bg-primary rounded-full shadow-lg"
-            >
-              Browse File
-            </motion.button>
+            {isLoading ? (
+              <div className="flex flex-col items-center space-y-2">
+                <svg className="animate-spin h-8 w-8 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <p className="text-lg font-semibold">{progressMessage}</p>
+                <p className="text-sm text-muted-foreground">This might take a few moments...</p>
+              </div>
+            ) : (
+              <>
+                <p className="text-lg font-semibold">
+                  Drag & Drop your .zip or .docx file here
+                </p>
+                <p className="text-muted-foreground">or</p>
+                <motion.button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isLoading}
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  className="px-6 py-2 font-semibold text-primary-foreground bg-primary rounded-full shadow-lg"
+                >
+                  Browse File
+                </motion.button>
+              </>
+            )}
           </div>
         </motion.div>
         {error && <p className="text-destructive text-sm">{error}</p>}
