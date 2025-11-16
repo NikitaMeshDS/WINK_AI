@@ -57,89 +57,72 @@ RESULT_ROOT = "results"
 os.makedirs(UPLOAD_ROOT, exist_ok=True)
 os.makedirs(RESULT_ROOT, exist_ok=True)
 
-ML_API_URL = "http://host.docker.internal:8000"
+# ML service URL, configurable via environment variables
+ML_API_URL = os.environ.get("ML_API_URL", "http://host.docker.internal:8000")
 
 
-def process_docx_file(docx_path: str, result_path: str) -> dict:
+import glob
+import itertools
+
+
+def get_data_from_docx(docx_path: str) -> dict:
     """
-    Process a .docx script file by calling the ML service.
+    Process a single .docx script file by sending it to the ML service
+    and returning the extracted data.
     """
-    logger.info(f"Processing .docx file: {docx_path}. Sending to ML service at {ML_API_URL}")
+    logger.info(f"Sending {docx_path} to ML service for analysis...")
     
-    # file_name = os.path.basename(docx_path)
+    try:
+        with open(docx_path, "rb") as f:
+            files = {"file": (os.path.basename(docx_path), f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
+            response = requests.post(f"{ML_API_URL}/analyze", files=files, timeout=300) # 5-minute timeout
+        
+        response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
+        
+        data = response.json()
+        logger.info(f"Successfully received data from ML service for {docx_path}")
+        return data
 
-    # with open(docx_path, "rb") as f:
-    #     files = {"file": (file_name, f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
-    #     # The ML service endpoint is /analyze
-    #     ml_service_url = f"{ML_API_URL}/analyze"
-    #     response = requests.post(ml_service_url, files=files)
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to connect to ML service: {e}")
+        raise HTTPException(status_code=503, detail=f"ML service is unavailable: {e}")
+    except Exception as e:
+        logger.error(f"An unexpected error occurred while processing with ML service: {e}")
+        raise HTTPException(status_code=500, detail=f"Error processing file with ML service: {e}")
 
-    # if response.status_code != 200:
-    #     logger.error(f"Error from ML service. Status: {response.status_code}, Body: {response.text}")
-    #     raise HTTPException(status_code=response.status_code, detail=f"Error from ML service: {response.text}")
+def create_summary_excel(all_data: dict, output_path: str):
+    """Create a summary Excel file with unique actors and props."""
+    logger.info("Creating summary file...")
+    all_actors = set()
+    all_props = set()
 
-    # logger.info("Successfully received response from ML service.")
+    for show_name, show_data in all_data.items():
+        for series_name, series_data in show_data.items():
+            for scene in series_data:
+                actors = scene.get("Актеры", [])
+                if isinstance(actors, list):
+                    all_actors.update(actors)
+                
+                props_str = scene.get("Реквизит", "")
+                if props_str and isinstance(props_str, str):
+                    props_list = [p.strip() for p in props_str.split(',') if p.strip()]
+                    all_props.update(props_list)
+
+    # Pad lists to the same length for DataFrame creation
+    actors_list = sorted(list(all_actors))
+    props_list = sorted(list(all_props))
+    max_len = max(len(actors_list), len(props_list))
     
-    # try:
-    #     # NOTE: When re-enabling Runpod, the ML service's /analyze endpoint will
-    #     # return the data directly, so the logic below that checks for
-    #     # 'scenes_processed' and calls /result will no longer be needed.
-    #     data = response.json()
-    #     # In the ML app, the actual scene data is returned directly, not nested.
-    #     # If the response is {"status": "success", "scenes_processed": N}, we need to call /result
-    #     if isinstance(data, dict) and "scenes_processed" in data:
-    #          logger.info("ML service returned a status object, fetching full results from /result endpoint.")
-    #          result_url = f"{ML_API_URL}/result"
-    #          response = requests.get(result_url)
-    #          if response.status_code != 200:
-    #              logger.error(f"Error fetching results from ML service. Status: {response.status_code}, Body: {response.text}")
-    #              raise HTTPException(status_code=response.status_code, detail=f"Error fetching results from ML service: {response.text}")
-    #          data = response.json()
+    actors_padded = actors_list + [''] * (max_len - len(actors_list))
+    props_padded = props_list + [''] * (max_len - len(props_list))
 
-    #     logger.info(f"Received JSON data from ML service: {json.dumps(data, ensure_ascii=False, indent=2)}")
-    # except json.JSONDecodeError:
-    #     logger.error(f"Failed to decode JSON from ML service response. Response text: {response.text}")
-    #     raise HTTPException(status_code=500, detail="Invalid JSON response from ML service.")
-
-    # Mock data generation
-    data = {}
-    for i in range(1, 11):
-        series_name = f"Серия {i}"
-        data[series_name] = []
-        for j in range(1, 6):
-            scene_data = {
-                "Серия": f"{i}",
-                "Сцена": f"{j}",
-                "Режим": "День",
-                "Инт / нат": "ИНТ.",
-                "Объект": f"Локация {j}",
-                "Подобъект": "",
-                "Синопсис": f"Синопсис для сцены {j} серии {i}",
-                "Персонажи": ["Персонаж 1", "Персонаж 2"],
-                "Каскадер / Пиротехник": "",
-                "Актеры": ["Актер 1", "Актер 2"],
-                "Примечание": "",
-                "Массовка": "",
-                "Групповка": "",
-                "Животное": "",
-                "Грим": "",
-                "Костюм": "",
-                "Реквизит": "",
-                "Игровой транспорт": ""
-            }
-            # Make day optional for series 3 and 7
-            if i not in [3, 7]:
-                scene_data["День"] = f"{(i-1)*5 + j}"
-            
-            data[series_name].append(scene_data)
-
-    with pd.ExcelWriter(result_path) as writer:
-        for series_name, scene_data in data.items():
-            df = pd.DataFrame(scene_data)
-            df.to_excel(writer, sheet_name=series_name, index=False)
+    summary_df = pd.DataFrame({
+        'Актеры': actors_padded,
+        'Реквизит': props_padded
+    })
     
-    logger.info(f"Successfully created and saved Excel file to {result_path}")
-    return data
+    summary_df.to_excel(output_path, index=False)
+    logger.info(f"Summary file created at: {output_path}")
 
 
 @app.post("/upload", response_model=schemas.UploadResponse)
@@ -148,63 +131,102 @@ async def upload_script(
 ) -> schemas.UploadResponse:
     """
     Handle a new script upload.
-    Accepts a .zip or .docx file, processes the script, and returns the result.
+    - Accepts a .zip or .docx file.
+    - If zip contains multiple folders, creates a zip output with one Excel per folder.
+    - If a folder/show has >20 series, splits it into multiple Excel files.
+    - Creates a summary Excel file with all unique actors and props.
     """
     filename = file.filename or "uploaded_file"
     logger.info(f"--- New upload request for file: {filename} ---")
 
-    # Check for allowed file types
-    is_zip = filename.lower().endswith(".zip")
-    is_docx = filename.lower().endswith(".docx")
-
-    if not is_zip and not is_docx:
-        logger.warning(f"Upload rejected: File '{filename}' is not a .zip or .docx archive.")
+    if not (filename.lower().endswith(".zip") or filename.lower().endswith(".docx")):
         raise HTTPException(status_code=400, detail="Only .zip and .docx files are supported.")
 
     uid = uuid.uuid4().hex
     upload_dir = os.path.join(UPLOAD_ROOT, uid)
     os.makedirs(upload_dir, exist_ok=True)
-    saved_file_path = os.path.join(upload_dir, filename)
     
-    logger.info(f"Saving uploaded file to: {saved_file_path}")
-    with open(saved_file_path, "wb") as f:
-        contents = await file.read()
-        f.write(contents)
-    
-    docx_to_process_path = ""
+    # This directory will hold all generated excel files for this upload
+    output_files_dir = os.path.join(RESULT_ROOT, uid)
+    os.makedirs(output_files_dir, exist_ok=True)
 
-    if is_zip:
+    saved_file_path = os.path.join(upload_dir, filename)
+    with open(saved_file_path, "wb") as f:
+        f.write(await file.read())
+
+    all_docx_paths = []
+    if filename.lower().endswith(".docx"):
+        all_docx_paths.append(saved_file_path)
+    else: # It's a zip
         extract_dir = os.path.join(upload_dir, "extracted")
         os.makedirs(extract_dir, exist_ok=True)
-        logger.info(f"Extracting archive to: {extract_dir}")
         try:
             with zipfile.ZipFile(saved_file_path, "r") as zip_ref:
                 zip_ref.extractall(extract_dir)
         except zipfile.BadZipFile:
-            logger.error(f"Invalid ZIP archive uploaded: {filename}")
-            shutil.rmtree(upload_dir, ignore_errors=True)
             raise HTTPException(status_code=400, detail="Invalid ZIP archive.")
         
-        # Find the .docx file in the extracted archive
-        docx_files = [f for f in os.listdir(extract_dir) if f.lower().endswith(".docx")]
-        if not docx_files:
-            logger.error(f"No .docx file found in the archive: {filename}")
-            shutil.rmtree(upload_dir, ignore_errors=True)
-            raise HTTPException(status_code=400, detail="No .docx file found in the zip archive.")
+        all_docx_paths = glob.glob(os.path.join(extract_dir, '**', '*.docx'), recursive=True)
+        if not all_docx_paths:
+            raise HTTPException(status_code=400, detail="No .docx files found in the zip archive.")
+
+    # Group docx paths by their parent directory (show name)
+    shows = {k: list(v) for k, v in itertools.groupby(sorted(all_docx_paths), key=lambda p: os.path.basename(os.path.dirname(p)))}
+    # For single docx file or files in root of zip
+    if ".":
+        root_files = shows.pop(".", [])
+        if root_files:
+            shows[os.path.splitext(filename)[0]] = root_files
+
+    all_aggregated_data = {}
+    generated_excel_paths = []
+
+    for show_name, docx_paths in shows.items():
+        show_data = {}
+        for docx_path in docx_paths:
+            series_data = get_data_from_docx(docx_path)
+            show_data.update(series_data)
         
-        docx_to_process_path = os.path.join(extract_dir, docx_files[0])
+        all_aggregated_data[show_name] = show_data
+        
+        series_items = sorted(list(show_data.items()), key=lambda x: int(x[0].split(" ")[1]))
+        
+        # Split into chunks of 20 series per Excel file
+        for i in range(0, len(series_items), 20):
+            chunk = series_items[i:i+20]
+            start_series = chunk[0][0].split(" ")[1]
+            end_series = chunk[-1][0].split(" ")[1]
+            
+            excel_filename = f"{show_name}_серии_{start_series}-{end_series}.xlsx"
+            excel_path = os.path.join(output_files_dir, excel_filename)
+            
+            with pd.ExcelWriter(excel_path) as writer:
+                for series_name, scene_data in chunk:
+                    df = pd.DataFrame(scene_data)
+                    df.to_excel(writer, sheet_name=series_name[:31], index=False)
+            generated_excel_paths.append(excel_path)
+            logger.info(f"Generated Excel file: {excel_path}")
 
-    elif is_docx:
-        docx_to_process_path = saved_file_path
+    # Create the final summary file
+    summary_path = os.path.join(output_files_dir, "Итог.xlsx")
+    create_summary_excel(all_aggregated_data, summary_path)
+    generated_excel_paths.append(summary_path)
 
-    # Process the determined .docx file
-    result_file = os.path.join(RESULT_ROOT, f"{uid}.xlsx")
-    data = process_docx_file(docx_to_process_path, result_file)
-    
-    logger.info("Saving upload record to the database.")
-    record = crud.create_upload(db, filename=filename, result_path=result_file, data_json=data)
+    # Decide final result path (single excel or zip)
+    final_result_path = ""
+    if len(generated_excel_paths) == 1:
+        final_result_path = generated_excel_paths[0]
+    else:
+        final_result_path = os.path.join(RESULT_ROOT, f"{uid}.zip")
+        with zipfile.ZipFile(final_result_path, 'w') as zipf:
+            for file_path in generated_excel_paths:
+                zipf.write(file_path, os.path.basename(file_path))
+        logger.info(f"Created result zip archive: {final_result_path}")
+
+    # Save to DB and return response
+    record = crud.create_upload(db, filename=filename, result_path=final_result_path, data_json=all_aggregated_data)
     logger.info(f"Upload complete. Returning response for ID: {record.id}")
-    return schemas.UploadResponse(id=record.id, data=data)
+    return schemas.UploadResponse(id=record.id, data=all_aggregated_data)
 
 
 @app.get("/history", response_model=List[schemas.UploadInfo])
@@ -237,17 +259,24 @@ def get_result(upload_id: int, db: Session = Depends(get_db)) -> schemas.UploadD
 
 
 @app.get("/download/{upload_id}")
-def download_excel(upload_id: int, db: Session = Depends(get_db)):
+def download_result(upload_id: int, db: Session = Depends(get_db)):
     """
-    Stream the generated Excel workbook to the client.
+    Stream the generated result (Excel or ZIP) to the client.
     """
     record = crud.get_upload(db, upload_id)
     if not record:
         raise HTTPException(status_code=404, detail="Upload not found.")
     
-    download_filename = f"сценарий_{record.id}.xlsx"
+    original_filename_base = os.path.splitext(record.filename)[0]
     
-    return FileResponse(record.result_path, filename=download_filename)
+    if record.result_path.lower().endswith(".zip"):
+        download_filename = f"{original_filename_base}_результат.zip"
+        media_type = "application/zip"
+    else:
+        download_filename = f"{original_filename_base}_результат.xlsx"
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        
+    return FileResponse(record.result_path, filename=download_filename, media_type=media_type)
 
 
 # Attempt to serve the built frontend if it exists

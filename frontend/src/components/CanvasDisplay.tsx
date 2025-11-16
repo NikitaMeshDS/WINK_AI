@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
@@ -6,14 +6,29 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls';
 
 interface CanvasDisplayProps {
-  data: Record<string, Array<Record<string, any>>>;
+  data: Record<string, Record<string, Array<Record<string, any>>>>;
 }
 
 const CanvasDisplay: React.FC<CanvasDisplayProps> = ({ data }) => {
   const mountRef = useRef<HTMLDivElement | null>(null);
-  const seriesNames = Object.keys(data);
+  const showNames = Object.keys(data);
+  const [selectedShow, setSelectedShow] = useState(showNames[0]);
+  
+  const seriesNames = useMemo(() => {
+    return selectedShow && data[selectedShow] ? Object.keys(data[selectedShow]) : [];
+  }, [data, selectedShow]);
+
   const [selectedSeries, setSelectedSeries] = useState(seriesNames[0]);
   const [mode, setMode] = useState<'translate' | 'rotate' | 'scale'>('translate');
+
+  // Effect to reset series selection when show changes
+  React.useEffect(() => {
+    if (seriesNames.length > 0) {
+      setSelectedSeries(seriesNames[0]);
+    } else {
+      setSelectedSeries('');
+    }
+  }, [seriesNames]);
 
   useEffect(() => {
     if (!mountRef.current) return;
@@ -85,8 +100,6 @@ const CanvasDisplay: React.FC<CanvasDisplayProps> = ({ data }) => {
       scene.add(transformControls);
     } catch (e) {
       console.error("Failed to add TransformControls to scene directly, attempting workaround.", e);
-      // If adding the control itself fails, add its internal gizmo and plane
-      // This is not standard, but can work around module resolution issues
       scene.add(transformControls.gizmo);
       scene.add(transformControls.plane);
     }
@@ -141,7 +154,6 @@ const CanvasDisplay: React.FC<CanvasDisplayProps> = ({ data }) => {
 
     // Event Listeners
     const onPointerClick = (event: MouseEvent) => {
-      // Prevent raycasting when using the transform controls
       if ((event.target as HTMLElement)?.tagName === 'CANVAS' && transformControls.dragging) {
         return;
       }
@@ -206,32 +218,56 @@ const CanvasDisplay: React.FC<CanvasDisplayProps> = ({ data }) => {
       delete (window as any).addShape;
       delete (window as any).setTransformMode;
     };
-  }, [data, selectedSeries]); // Re-run on data/series change
+  }, [data, selectedShow, selectedSeries]); // Re-run on data/show/series change
 
-  if (!data || seriesNames.length === 0) {
+  if (!data || showNames.length === 0) {
     return <p className="text-sm text-muted-foreground">Нет данных для отображения.</p>;
   }
 
   return (
     <div className="w-full">
-      <div className="mb-4 border-b border-border">
-        <nav className="-mb-px flex space-x-8" aria-label="Tabs">
-          {seriesNames.map((name) => (
-            <button
-              key={name}
-              onClick={() => setSelectedSeries(name)}
-              className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${
-                name === selectedSeries
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-muted-foreground hover:text-foreground hover:border-gray-300'
-              }`}
-            >
-              {name}
-            </button>
-          ))}
-        </nav>
-      </div>
       <div className="space-y-4">
+        {/* Show Tabs */}
+        <div className="border-b border-border">
+            <nav className="-mb-px flex space-x-8" aria-label="Shows">
+            {showNames.map((name) => (
+                <button
+                key={name}
+                onClick={() => setSelectedShow(name)}
+                className={`
+                    ${name === selectedShow
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-muted-foreground hover:text-foreground hover:border-gray-300'
+                    }
+                    whitespace-nowrap pb-2 px-1 border-b-2 font-semibold text-md
+                `}
+                >
+                {name}
+                </button>
+            ))}
+            </nav>
+        </div>
+
+        {/* Series Tabs */}
+        <div className="border-b border-border">
+            <nav className="-mb-px flex space-x-8" aria-label="Tabs">
+            {seriesNames.map((name) => (
+                <button
+                key={name}
+                onClick={() => setSelectedSeries(name)}
+                className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${
+                    name === selectedSeries
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-muted-foreground hover:text-foreground hover:border-gray-300'
+                }`}
+                >
+                {name}
+                </button>
+            ))}
+            </nav>
+        </div>
+      </div>
+      <div className="space-y-4 mt-4">
         <div className="flex items-center justify-center gap-2 p-2 rounded-md bg-muted/50">
             <button onClick={() => (window as any).addActor()} className="px-3 py-1 text-sm font-semibold border rounded-full">Add Actor</button>
             <button onClick={() => (window as any).addShape('cube')} className="px-3 py-1 text-sm font-semibold border rounded-full">Add Cube</button>

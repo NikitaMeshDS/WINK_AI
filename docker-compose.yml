@@ -18,6 +18,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - ML_API_URL=http://69.30.85.136:8888
     volumes:
       - ./backend:/app/backend
       - ./backend/uploads:/app/uploads

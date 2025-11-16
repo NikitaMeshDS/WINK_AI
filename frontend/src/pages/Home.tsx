@@ -11,7 +11,11 @@ const Home: React.FC = () => {
 
   const handleUploadComplete = (data: UploadResponse) => {
     console.log('Data received on frontend:', JSON.stringify(data, null, 2));
-    setResult(data);
+    // Extract filename without extension to use as show name
+    const showName = data.filename.split('.').slice(0, -1).join('.');
+    // Wrap the data.data into the expected format for TableDisplay
+    const formattedData = { [showName]: data.data };
+    setResult({ ...data, data: formattedData }); // Update result with formatted data
     setShowCanvas(false);
   };
 
