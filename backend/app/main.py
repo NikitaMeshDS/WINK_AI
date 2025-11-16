@@ -87,7 +87,7 @@ def get_data_from_docx(docx_path: str) -> dict:
     try:
         with open(docx_path, "rb") as f:
             files = {"file": (os.path.basename(docx_path), f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
-            response = requests.post(f"{ML_API_URL}/runsync", files=files, timeout=300) # 5-minute timeout
+            response = requests.post(f"{ML_API_URL}/analyze", files=files, timeout=300) # 5-minute timeout
         
         response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
         
