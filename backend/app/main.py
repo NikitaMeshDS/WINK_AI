@@ -227,13 +227,13 @@ async def stream_processor(upload_id: int, db: Session):
             with zipfile.ZipFile(saved_file_path, "r") as zip_ref:
                 zip_ref.extractall(extract_dir)
         except zipfile.BadZipFile:
-            yield f"event: error\ndata: {json.dumps({'error': 'Invalid ZIP archive.'})}\\n\n"
+            yield f"event: error\ndata: {json.dumps({'error': 'Invalid ZIP archive.'})}\n\n"
             crud.update_upload_status_and_result(db, upload_id, "failed", None, {"error": "Invalid ZIP archive."})
             return
         
         all_docx_paths = glob.glob(os.path.join(extract_dir, '**', '*.docx'), recursive=True)
         if not all_docx_paths:
-            yield f"event: error\ndata: {json.dumps({'error': 'No .docx files found in the zip archive.'})}\\n\n"
+            yield f"event: error\ndata: {json.dumps({'error': 'No .docx files found in the zip archive.'})}\n\n"
             crud.update_upload_status_and_result(db, upload_id, "failed", None, {"error": "No .docx files found."})
             return
 
@@ -275,7 +275,7 @@ async def stream_processor(upload_id: int, db: Session):
                                         show_data[series_name].append(scene_data)
 
                                         # Stream the scene data to the client
-                                        yield f"data: {json.dumps(scene_data)}\\n\\n"
+                                        yield f"data: {json.dumps(scene_data)}\n\n"
                                     except json.JSONDecodeError:
                                         logger.warning(f"Could not decode JSON from stream: {scene_json}")
                                         continue
@@ -293,13 +293,13 @@ async def stream_processor(upload_id: int, db: Session):
         # Use Pydantic's .json() method to correctly serialize datetime objects
         final_json = final_model.json()
 
-        yield f"event: done\ndata: {final_json}\\n\\n"
+        yield f"event: done\ndata: {final_json}\n\n"
         logger.info(f"Upload {upload_id} successfully completed and finalized.")
 
     except Exception as e:
         logger.error(f"An error occurred during streaming for upload {upload_id}: {e}", exc_info=True)
         crud.update_upload_status_and_result(db, upload_id, "failed", None, {"error": str(e)})
-        yield f"event: error\ndata: {json.dumps({'error': 'An unexpected error occurred during analysis.', 'details': str(e)})}\\n\\n"
+        yield f"event: error\ndata: {json.dumps({'error': 'An unexpected error occurred during analysis.', 'details': str(e)})}\n\n"
 
 
 @app.get("/stream-results/{upload_id}")
