@@ -287,10 +287,13 @@ async def stream_processor(upload_id: int, db: Session):
         crud.update_upload_status_and_result(db, upload_id, "completed", final_result_path, all_aggregated_data)
         
         final_record = crud.get_upload(db, upload_id)
-        final_data = schemas.UploadDetail.from_orm(final_record).dict()
-        final_data['download_url'] = f"/download/{upload_id}"
+        final_model = schemas.UploadDetail.from_orm(final_record)
+        final_model.download_url = f"/download/{upload_id}"
+        
+        # Use Pydantic's .json() method to correctly serialize datetime objects
+        final_json = final_model.json()
 
-        yield f"event: done\ndata: {json.dumps(final_data)}\\n\\n"
+        yield f"event: done\ndata: {final_json}\\n\\n"
         logger.info(f"Upload {upload_id} successfully completed and finalized.")
 
     except Exception as e:
