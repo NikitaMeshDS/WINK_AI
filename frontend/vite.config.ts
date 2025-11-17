@@ -8,10 +8,20 @@ export default defineConfig(({ mode }) => {
 		server: {
 			// Proxy API requests during development to the backend
 			proxy: {
-				'/upload': {
+				'/upload': { // Keep for compatibility if needed, though it's deprecated
 					target: 'http://backend:8000',
 					changeOrigin: true,
 					timeout: 6000000,
+				},
+				'/initiate-upload': {
+					target: 'http://backend:8000',
+					changeOrigin: true,
+					timeout: 6000000, // Long timeout for initial upload
+				},
+				'/stream-results': {
+					target: 'http://backend:8000',
+					changeOrigin: true,
+					timeout: 0, // No timeout for streaming endpoint
 				},
 				'/history': {
 					target: 'http://backend:8000',
