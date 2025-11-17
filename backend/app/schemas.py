@@ -28,12 +28,25 @@ class UploadResponse(BaseModel):
         from_attributes = True
 
 
+class UploadInitiatedResponse(BaseModel):
+    """
+    Response returned immediately after an upload is initiated.
+    Contains the database identifier and the initial status.
+    """
+    id: int
+    status: str
+
+    class Config:
+        from_attributes = True
+
+
 class UploadInfo(BaseModel):
     """Summary information about a past upload."""
 
     id: int
     filename: str
     created_at: datetime
+    status: str
 
     class Config:
         from_attributes = True
@@ -45,8 +58,9 @@ class UploadDetail(BaseModel):
     id: int
     filename: str
     created_at: datetime
-    data: dict
-    download_url: str
+    status: str
+    data: Optional[dict] = None
+    download_url: Optional[str] = None
 
     class Config:
         from_attributes = True

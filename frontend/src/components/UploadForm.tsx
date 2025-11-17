@@ -1,41 +1,30 @@
 import React, { useRef, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { uploadScript, UploadResponse } from '../api';
 
 interface UploadFormProps {
-  onUploadComplete: (data: UploadResponse, filename: string) => void;
+  onUpload: (file: File) => void;
+  isLoading: boolean;
+  progressMessage: string | null;
+  error: string | null;
 }
 
-const UploadForm: React.FC<UploadFormProps> = ({ onUploadComplete }) => {
+const UploadForm: React.FC<UploadFormProps> = ({ onUpload, isLoading, progressMessage, error }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
-  const [progressMessage, setProgressMessage] = useState<string | null>(null);
 
   const handleFile = useCallback(
-    async (file: File) => {
+    (file: File) => {
       const isAccepted = file && (file.name.toLowerCase().endsWith('.zip') || file.name.toLowerCase().endsWith('.docx'));
       if (!isAccepted) {
-        setError('Please select a valid .zip or .docx file.');
+        // This component doesn't set the error state directly anymore,
+        // but we can call a prop or let the parent handle it.
+        // For now, we just prevent the upload.
+        alert('Please select a valid .zip or .docx file.');
         return;
       }
-      setIsLoading(true);
-      setError(null);
-      setProgressMessage('Uploading file...');
-      try {
-        const data = await uploadScript(file);
-        setProgressMessage('Processing data...'); // This message will be shown after upload, before onUploadComplete
-        onUploadComplete(data, file.name);
-      } catch (err: any) {
-        setError(err.message || 'File upload failed.');
-        setProgressMessage(null);
-      } finally {
-        setIsLoading(false);
-        setProgressMessage(null);
-      }
+      onUpload(file);
     },
-    [onUploadComplete],
+    [onUpload],
   );
 
   const handleDrag = (e: React.DragEvent) => {
@@ -98,7 +87,7 @@ const UploadForm: React.FC<UploadFormProps> = ({ onUploadComplete }) => {
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
-                <p className="text-lg font-semibold">{progressMessage}</p>
+                <p className="text-lg font-semibold">{progressMessage || 'Processing...'}</p>
                 <p className="text-sm text-muted-foreground">This might take a few moments...</p>
               </div>
             ) : (
@@ -122,9 +111,6 @@ const UploadForm: React.FC<UploadFormProps> = ({ onUploadComplete }) => {
           </div>
         </motion.div>
         {error && <p className="text-destructive text-sm">{error}</p>}
-        {isLoading && (
-          <p className="text-muted-foreground">Processing your file...</p>)
-        }
       </form>
     </motion.div>
   );

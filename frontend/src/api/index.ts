@@ -5,41 +5,49 @@
  * from the corresponding endpoint.  Errors are propagated as
  * rejected promises.
  */
-export interface UploadResponse {
+
+// Represents a single scene object streamed from the server
+export interface SceneData {
+  [key: string]: any;
+}
+
+export interface UploadInitiatedResponse {
   id: number;
-  data: Record<string, Array<Record<string, any>>>;
+  status: string;
 }
 
 export interface UploadInfo {
   id: number;
   filename: string;
   created_at: string;
+  status: string;
 }
 
 export interface UploadDetail {
   id: number;
   filename: string;
   created_at: string;
-  data: Record<string, Array<Record<string, any>>>;
-  download_url: string;
+  status: string;
+  data?: Record<string, Record<string, SceneData[]>>;
+  download_url?: string;
 }
 
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || 'Network error');
+    const errorData = await response.json().catch(() => ({ detail: 'Network error or invalid JSON response' }));
+    throw new Error(errorData.detail || 'An unknown error occurred');
   }
   return (await response.json()) as T;
 }
 
-export async function uploadScript(file: File): Promise<UploadResponse> {
+export async function initiateUpload(file: File): Promise<UploadInitiatedResponse> {
   const formData = new FormData();
   formData.append('file', file);
-  const res = await fetch('/upload', {
+  const res = await fetch('/initiate-upload', {
     method: 'POST',
     body: formData,
   });
-  return handleResponse<UploadResponse>(res);
+  return handleResponse<UploadInitiatedResponse>(res);
 }
 
 export async function getHistory(): Promise<UploadInfo[]> {

@@ -2,9 +2,8 @@
 FastAPI application entrypoint.
 
 This module defines the HTTP routes for uploading scripts, viewing
-results and downloading the generated Excel workbook.  It also
-initialises the database and serves the built frontend as static
-files when available.
+results and downloading the generated Excel workbook. It supports
+streaming results from the ML service to the client.
 """
 
 import json
@@ -13,13 +12,14 @@ import shutil
 import uuid
 import logging
 from datetime import datetime
-from typing import List
+from typing import List, Optional, AsyncGenerator, Dict, Any
+import asyncio
+import httpx
 
 import pandas as pd
-import requests
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from . import crud, models, schemas
@@ -27,6 +27,7 @@ from .database import Base, engine, get_db
 
 import zipfile
 import re
+import itertools
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -41,9 +42,6 @@ app = FastAPI(
     description="Upload a film script (.docx or .zip) and receive a structured preproduction table.",
 )
 
-# Allow requests from any origin during development.  In production you
-# should restrict allowed origins to the domains serving your
-# frontend.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -59,7 +57,7 @@ os.makedirs(UPLOAD_ROOT, exist_ok=True)
 os.makedirs(RESULT_ROOT, exist_ok=True)
 
 # ML service URL, configurable via environment variables
-ML_API_URL = os.environ.get("ML_API_URL", "http://host.docker.internal:8000")
+ML_API_URL = os.environ.get("ML_API_URL", "http://ml-app:8000")
 
 
 def get_numeric_series_key(series_name: str) -> int:
@@ -70,37 +68,7 @@ def get_numeric_series_key(series_name: str) -> int:
     match = re.match(r'^\d+', series_name)
     if match:
         return int(match.group(0))
-    return 9999 # A large number to put non-numeric series at the end
-
-
-import glob
-import itertools
-
-
-def get_data_from_docx(docx_path: str) -> dict:
-    """
-    Process a single .docx script file by sending it to the ML service
-    and returning the extracted data.
-    """
-    logger.info(f"Sending {docx_path} to ML service for analysis...")
-    
-    try:
-        with open(docx_path, "rb") as f:
-            files = {"file": (os.path.basename(docx_path), f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
-            response = requests.post(f"{ML_API_URL}/analyze", files=files, timeout=300) # 5-minute timeout
-        
-        response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
-        
-        data = response.json()
-        logger.info(f"Successfully received data from ML service for {docx_path}")
-        return data
-
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to connect to ML service: {e}")
-        raise HTTPException(status_code=503, detail=f"ML service is unavailable: {e}")
-    except Exception as e:
-        logger.error(f"An unexpected error occurred while processing with ML service: {e}")
-        raise HTTPException(status_code=500, detail=f"Error processing file with ML service: {e}")
+    return 9999
 
 def create_summary_excel(all_data: dict, output_path: str):
     """Create a summary Excel file with unique actors and props."""
@@ -117,10 +85,9 @@ def create_summary_excel(all_data: dict, output_path: str):
                 
                 props_str = scene.get("Реквизит", "")
                 if props_str and isinstance(props_str, str):
-                    props_list = [p.strip() for p in props_str.split(',') if p.strip()]
+                    props_list = [p.strip() for p in props_str.split(';') if p.strip()]
                     all_props.update(props_list)
 
-    # Pad lists to the same length for DataFrame creation
     actors_list = sorted(list(all_actors))
     props_list = sorted(list(all_props))
     max_len = max(len(actors_list), len(props_list))
@@ -137,37 +104,121 @@ def create_summary_excel(all_data: dict, output_path: str):
     logger.info(f"Summary file created at: {output_path}")
 
 
-@app.post("/upload", response_model=schemas.UploadResponse)
-async def upload_script(
-    file: UploadFile = File(...), db: Session = Depends(get_db)
-) -> schemas.UploadResponse:
+def finalize_results(uid: str, show_name: str, all_aggregated_data: Dict[str, Any]) -> str:
     """
-    Handle a new script upload.
-    - Accepts a .zip or .docx file.
-    - If zip contains multiple folders, creates a zip output with one Excel per folder.
-    - If a folder/show has >20 series, splits it into multiple Excel files.
-    - Creates a summary Excel file with all unique actors and props.
+    Takes the aggregated data, creates Excel files, and returns the path
+    to the final result (either a single Excel file or a ZIP archive).
+    """
+    output_files_dir = os.path.join(RESULT_ROOT, uid)
+    generated_excel_paths = []
+
+    for show_name, show_data in all_aggregated_data.items():
+        series_items = sorted(list(show_data.items()), key=lambda x: get_numeric_series_key(x[0]))
+        
+        for i in range(0, len(series_items), 20):
+            chunk = series_items[i:i+20]
+            start_series = get_numeric_series_key(chunk[0][0])
+            end_series = get_numeric_series_key(chunk[-1][0])
+            
+            excel_filename = f"{show_name}_серии_{start_series}-{end_series}.xlsx"
+            excel_path = os.path.join(output_files_dir, excel_filename)
+            
+            with pd.ExcelWriter(excel_path) as writer:
+                for series_name, scene_data in chunk:
+                    df = pd.DataFrame(scene_data)
+                    df.to_excel(writer, sheet_name=str(series_name)[:31], index=False)
+            generated_excel_paths.append(excel_path)
+            logger.info(f"Generated Excel file: {excel_path}")
+
+    if not generated_excel_paths:
+        logger.warning("No data was processed, no Excel files generated.")
+        return ""
+
+    summary_path = os.path.join(output_files_dir, "Итог.xlsx")
+    create_summary_excel(all_aggregated_data, summary_path)
+    generated_excel_paths.append(summary_path)
+
+    content_excel_paths = [p for p in generated_excel_paths if not os.path.basename(p).startswith("Итог")]
+    summary_excel_path = next((p for p in generated_excel_paths if os.path.basename(p).startswith("Итог")), None)
+
+    if len(content_excel_paths) == 1 and summary_excel_path:
+        main_excel_path = content_excel_paths[0]
+        try:
+            summary_df = pd.read_excel(summary_excel_path)
+            with pd.ExcelWriter(main_excel_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
+                summary_df.to_excel(writer, sheet_name='Итог', index=False)
+            os.remove(summary_excel_path)
+            generated_excel_paths = [main_excel_path]
+        except Exception as e:
+            logger.error(f"Failed to merge summary into {main_excel_path}: {e}")
+
+    if len(generated_excel_paths) == 1:
+        return generated_excel_paths[0]
+    else:
+        final_zip_path = os.path.join(RESULT_ROOT, f"{uid}.zip")
+        with zipfile.ZipFile(final_zip_path, 'w') as zipf:
+            for file_path in generated_excel_paths:
+                zipf.write(file_path, os.path.basename(file_path))
+        logger.info(f"Created result zip archive: {final_zip_path}")
+        return final_zip_path
+
+
+@app.post("/initiate-upload", response_model=schemas.UploadInitiatedResponse)
+async def initiate_upload(
+    file: UploadFile = File(...), db: Session = Depends(get_db)
+) -> schemas.UploadInitiatedResponse:
+    """
+    Accepts a script file, saves it, and creates a database entry
+    with 'processing' status, returning the ID for tracking.
     """
     filename = file.filename or "uploaded_file"
-    logger.info(f"--- New upload request for file: {filename} ---")
+    logger.info(f"--- New upload initiated for file: {filename} ---")
 
     if not (filename.lower().endswith(".zip") or filename.lower().endswith(".docx")):
         raise HTTPException(status_code=400, detail="Only .zip and .docx files are supported.")
 
-    uid = uuid.uuid4().hex
+    # Use the upload ID as the directory name to keep files organized
+    record = crud.initiate_upload(db, filename=filename)
+    uid = str(record.id) # Use DB id as UID for simplicity and direct mapping
+
     upload_dir = os.path.join(UPLOAD_ROOT, uid)
     os.makedirs(upload_dir, exist_ok=True)
     
-    # This directory will hold all generated excel files for this upload
-    output_files_dir = os.path.join(RESULT_ROOT, uid)
-    os.makedirs(output_files_dir, exist_ok=True)
-
     saved_file_path = os.path.join(upload_dir, filename)
     with open(saved_file_path, "wb") as f:
         f.write(await file.read())
 
+    logger.info(f"File '{filename}' saved for upload ID: {uid}. Ready for streaming analysis.")
+    
+    return schemas.UploadInitiatedResponse(id=record.id, status=record.status)
+
+
+async def stream_processor(upload_id: int, db: Session):
+    """
+    The core async generator for processing a file and streaming results.
+    """
+    record = crud.get_upload(db, upload_id)
+    if not record:
+        logger.error(f"Stream request for unknown upload_id: {upload_id}")
+        yield f"event: error\ndata: {json.dumps({'error': 'Upload not found'})}\n\n"
+        return
+
+    uid = str(record.id)
+    upload_dir = os.path.join(UPLOAD_ROOT, uid)
+    saved_file_path = os.path.join(upload_dir, record.filename)
+
+    if not os.path.exists(saved_file_path):
+        logger.error(f"File not found for upload_id: {upload_id}")
+        yield f"event: error\ndata: {json.dumps({'error': 'File not found on server'})}\n\n"
+        crud.update_upload_status_and_result(db, upload_id, "failed", None, {"error": "File not found"})
+        return
+
+    # This directory will hold all generated excel files for this upload
+    output_files_dir = os.path.join(RESULT_ROOT, uid)
+    os.makedirs(output_files_dir, exist_ok=True)
+
     all_docx_paths = []
-    if filename.lower().endswith(".docx"):
+    if record.filename.lower().endswith(".docx"):
         all_docx_paths.append(saved_file_path)
     else: # It's a zip
         extract_dir = os.path.join(upload_dir, "extracted")
@@ -176,118 +227,86 @@ async def upload_script(
             with zipfile.ZipFile(saved_file_path, "r") as zip_ref:
                 zip_ref.extractall(extract_dir)
         except zipfile.BadZipFile:
-            raise HTTPException(status_code=400, detail="Invalid ZIP archive.")
+            yield f"event: error\ndata: {json.dumps({'error': 'Invalid ZIP archive.'})}\\n\n"
+            crud.update_upload_status_and_result(db, upload_id, "failed", None, {"error": "Invalid ZIP archive."})))
+            return
         
         all_docx_paths = glob.glob(os.path.join(extract_dir, '**', '*.docx'), recursive=True)
         if not all_docx_paths:
-            raise HTTPException(status_code=400, detail="No .docx files found in the zip archive.")
+            yield f"event: error\ndata: {json.dumps({'error': 'No .docx files found in the zip archive.'})}\\n\n"
+            crud.update_upload_status_and_result(db, upload_id, "failed", None, {"error": "No .docx files found."})))
+            return
 
-    # Group docx paths by their parent directory (show name)
     shows = {k: list(v) for k, v in itertools.groupby(sorted(all_docx_paths), key=lambda p: os.path.basename(os.path.dirname(p)))}
-    # For single docx file or files in root of zip
     if ".":
         root_files = shows.pop(".", [])
         if root_files:
-            shows[os.path.splitext(filename)[0]] = root_files
+            shows[os.path.splitext(record.filename)[0]] = root_files
 
     all_aggregated_data = {}
-    generated_excel_paths = []
+    
+    try:
+        async with httpx.AsyncClient(timeout=None) as client:
+            for show_name, docx_paths in shows.items():
+                show_data = {}
+                all_aggregated_data[show_name] = show_data
 
-    for show_name, docx_paths in shows.items():
-        show_data = {}
-        for docx_path in docx_paths:
-            scenes = get_data_from_docx(docx_path)
-            
-            # The ML service returns a list of scenes; we need to group them by series name.
-            grouped_data = {}
-            for scene in scenes:
-                # Use the series name from the scene, or fall back to the filename.
-                series_name = scene.get("Серия") or os.path.splitext(os.path.basename(docx_path))[0]
-                if series_name not in grouped_data:
-                    grouped_data[series_name] = []
-                
-                # The ML service might return duplicate scenes; let's add only unique ones.
-                if scene not in grouped_data[series_name]:
-                    grouped_data[series_name].append(scene)
-            
-            # Merge the grouped data into the main show_data dictionary
-            for series_name, scene_list in grouped_data.items():
-                if series_name in show_data:
-                    show_data[series_name].extend(scene_list)
-                else:
-                    show_data[series_name] = scene_list
+                for docx_path in docx_paths:
+                    logger.info(f"Streaming analysis for {docx_path}...")
+                    with open(docx_path, "rb") as f:
+                        files = {"file": (os.path.basename(docx_path), f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
+                        
+                        async with client.stream("POST", f"{ML_API_URL}/analyze", files=files, timeout=None) as response:
+                            if response.status_code != 200:
+                                error_body = await response.aread()
+                                raise HTTPException(status_code=response.status_code, detail=f"ML service error: {error_body.decode()}")
+
+                            buffer = ""
+                            async for line in response.aiter_lines():
+                                if line.startswith("data:"):
+                                    scene_json = line[len("data:"):].strip()
+                                    try:
+                                        scene_data = json.loads(scene_json)
+                                        
+                                        # Group scene into the correct series
+                                        series_name = scene_data.get("Серия") or os.path.splitext(os.path.basename(docx_path))[0]
+                                        if series_name not in show_data:
+                                            show_data[series_name] = []
+                                        show_data[series_name].append(scene_data)
+
+                                        # Stream the scene data to the client
+                                        yield f"data: {json.dumps(scene_data)}\\n\\n"
+                                    except json.JSONDecodeError:
+                                        logger.warning(f"Could not decode JSON from stream: {scene_json}")
+                                        continue
         
-        all_aggregated_data[show_name] = show_data
+        logger.info(f"Finished streaming analysis for upload {upload_id}.")
         
-        series_items = sorted(
-            list(show_data.items()), 
-            key=lambda x: get_numeric_series_key(x[0])
-        )
+        # Finalize: create Excel files and update DB
+        final_result_path = finalize_results(uid, record.filename, all_aggregated_data)
+        crud.update_upload_status_and_result(db, upload_id, "completed", final_result_path, all_aggregated_data)
         
-        # Split into chunks of 20 series per Excel file
-        for i in range(0, len(series_items), 20):
-            chunk = series_items[i:i+20]
-            start_series = chunk[0][0]
-            end_series = chunk[-1][0]
-            
-            excel_filename = f"{show_name}_серии_{start_series}-{end_series}.xlsx"
-            excel_path = os.path.join(output_files_dir, excel_filename)
-            
-            with pd.ExcelWriter(excel_path) as writer:
-                for series_name, scene_data in chunk:
-                    df = pd.DataFrame(scene_data)
-                    df.to_excel(writer, sheet_name=series_name[:31], index=False)
-            generated_excel_paths.append(excel_path)
-            logger.info(f"Generated Excel file: {excel_path}")
+        final_record = crud.get_upload(db, upload_id)
+        final_data = schemas.UploadDetail.from_orm(final_record).dict()
+        final_data['download_url'] = f"/download/{upload_id}"
 
-    # Create the final summary file
-    summary_path = os.path.join(output_files_dir, "Итог.xlsx")
-    create_summary_excel(all_aggregated_data, summary_path)
-    generated_excel_paths.append(summary_path)
+        yield f"event: done\ndata: {json.dumps(final_data)}\\n\\n"
+        logger.info(f"Upload {upload_id} successfully completed and finalized.")
 
-    # Separate content Excel files from the summary file
-    content_excel_paths = [p for p in generated_excel_paths if not os.path.basename(p).startswith("Итог")]
-    summary_excel_path = next((p for p in generated_excel_paths if os.path.basename(p).startswith("Итог")), None)
+    except Exception as e:
+        logger.error(f"An error occurred during streaming for upload {upload_id}: {e}", exc_info=True)
+        crud.update_upload_status_and_result(db, upload_id, "failed", None, {"error": str(e)}))
+        yield f"event: error\ndata: {json.dumps({'error': 'An unexpected error occurred during analysis.', 'details': str(e)})}\\n\\n"
 
-    if len(content_excel_paths) == 1 and summary_excel_path:
-        # Scenario: One content Excel file and a summary file. Merge them.
-        main_excel_path = content_excel_paths[0]
-        
-        logger.info(f"Merging summary into {main_excel_path}...")
-        
-        try:
-            # Load summary data
-            summary_df = pd.read_excel(summary_excel_path)
 
-            # Append summary as a new sheet to the main Excel file
-            with pd.ExcelWriter(main_excel_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
-                summary_df.to_excel(writer, sheet_name='Итог', index=False)
-            
-            logger.info(f"Successfully merged summary into {main_excel_path}")
-            
-            # Remove the separate summary file
-            os.remove(summary_excel_path)
-            generated_excel_paths = [main_excel_path] # Update the list to only contain the merged file
-        except Exception as e:
-            logger.error(f"Failed to merge summary into {main_excel_path}: {e}")
-            # If merging fails, proceed with zipping both files as a fallback
-            pass # The original generated_excel_paths will be used for zipping
-
-    # Decide final result path (single excel or zip)
-    final_result_path = ""
-    if len(generated_excel_paths) == 1:
-        final_result_path = generated_excel_paths[0]
-    else:
-        final_result_path = os.path.join(RESULT_ROOT, f"{uid}.zip")
-        with zipfile.ZipFile(final_result_path, 'w') as zipf:
-            for file_path in generated_excel_paths:
-                zipf.write(file_path, os.path.basename(file_path))
-        logger.info(f"Created result zip archive: {final_result_path}")
-
-    # Save to DB and return response
-    record = crud.create_upload(db, filename=filename, result_path=final_result_path, data_json=all_aggregated_data)
-    logger.info(f"Upload complete. Returning response for ID: {record.id}")
-    return schemas.UploadResponse(id=record.id, data=all_aggregated_data)
+@app.get("/stream-results/{upload_id}")
+async def stream_results(upload_id: int, request: Request, db: Session = Depends(get_db)):
+    """
+    Connects a client to receive real-time analysis results for an upload.
+    """
+    # Pass the DB session to the generator
+    generator = stream_processor(upload_id, db)
+    return StreamingResponse(generator, media_type="text/event-stream")
 
 
 @app.get("/history", response_model=List[schemas.UploadInfo])
@@ -305,15 +324,21 @@ def get_result(upload_id: int, db: Session = Depends(get_db)) -> schemas.UploadD
     record = crud.get_upload(db, upload_id)
     if not record:
         raise HTTPException(status_code=404, detail="Upload not found.")
-    try:
-        data = json.loads(record.data_json)
-    except json.JSONDecodeError:
-        data = {}
-    download_url = f"/download/{record.id}"
+    
+    data = {}
+    if record.data_json:
+        try:
+            data = json.loads(record.data_json)
+        except json.JSONDecodeError:
+            data = {"error": "Failed to decode result data."}
+
+    download_url = f"/download/{record.id}" if record.status == "completed" else None
+    
     return schemas.UploadDetail(
         id=record.id,
         filename=record.filename,
         created_at=record.created_at,
+        status=record.status,
         data=data,
         download_url=download_url,
     )
@@ -325,8 +350,8 @@ def download_result(upload_id: int, db: Session = Depends(get_db)):
     Stream the generated result (Excel or ZIP) to the client.
     """
     record = crud.get_upload(db, upload_id)
-    if not record:
-        raise HTTPException(status_code=404, detail="Upload not found.")
+    if not record or not record.result_path or record.status != "completed":
+        raise HTTPException(status_code=404, detail="Result not found or not completed.")
     
     original_filename_base = os.path.splitext(record.filename)[0]
     
