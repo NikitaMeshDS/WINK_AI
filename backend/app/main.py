@@ -228,13 +228,13 @@ async def stream_processor(upload_id: int, db: Session):
                 zip_ref.extractall(extract_dir)
         except zipfile.BadZipFile:
             yield f"event: error\ndata: {json.dumps({'error': 'Invalid ZIP archive.'})}\\n\n"
-            crud.update_upload_status_and_result(db, upload_id, "failed", None, {"error": "Invalid ZIP archive."})))
+            crud.update_upload_status_and_result(db, upload_id, "failed", None, {"error": "Invalid ZIP archive."})
             return
         
         all_docx_paths = glob.glob(os.path.join(extract_dir, '**', '*.docx'), recursive=True)
         if not all_docx_paths:
             yield f"event: error\ndata: {json.dumps({'error': 'No .docx files found in the zip archive.'})}\\n\n"
-            crud.update_upload_status_and_result(db, upload_id, "failed", None, {"error": "No .docx files found."})))
+            crud.update_upload_status_and_result(db, upload_id, "failed", None, {"error": "No .docx files found."})
             return
 
     shows = {k: list(v) for k, v in itertools.groupby(sorted(all_docx_paths), key=lambda p: os.path.basename(os.path.dirname(p)))}
@@ -295,7 +295,7 @@ async def stream_processor(upload_id: int, db: Session):
 
     except Exception as e:
         logger.error(f"An error occurred during streaming for upload {upload_id}: {e}", exc_info=True)
-        crud.update_upload_status_and_result(db, upload_id, "failed", None, {"error": str(e)}))
+        crud.update_upload_status_and_result(db, upload_id, "failed", None, {"error": str(e)})
         yield f"event: error\ndata: {json.dumps({'error': 'An unexpected error occurred during analysis.', 'details': str(e)})}\\n\\n"
 
 
