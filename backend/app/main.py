@@ -196,8 +196,26 @@ async def upload_script(
     for show_name, docx_paths in shows.items():
         show_data = {}
         for docx_path in docx_paths:
-            series_data = get_data_from_docx(docx_path)
-            show_data.update(series_data)
+            scenes = get_data_from_docx(docx_path)
+            
+            # The ML service returns a list of scenes; we need to group them by series name.
+            grouped_data = {}
+            for scene in scenes:
+                # Use the series name from the scene, or fall back to the filename.
+                series_name = scene.get("Серия") or os.path.splitext(os.path.basename(docx_path))[0]
+                if series_name not in grouped_data:
+                    grouped_data[series_name] = []
+                
+                # The ML service might return duplicate scenes; let's add only unique ones.
+                if scene not in grouped_data[series_name]:
+                    grouped_data[series_name].append(scene)
+            
+            # Merge the grouped data into the main show_data dictionary
+            for series_name, scene_list in grouped_data.items():
+                if series_name in show_data:
+                    show_data[series_name].extend(scene_list)
+                else:
+                    show_data[series_name] = scene_list
         
         all_aggregated_data[show_name] = show_data
         
