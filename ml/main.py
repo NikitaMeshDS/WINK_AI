@@ -223,7 +223,7 @@ def ensure_full_structure(result: Optional[Dict]) -> Dict:
     
     return filtered_result
 
- @dataclass
+@dataclass
 class Scene:
     index: int
     scene_number_raw: Optional[str]
@@ -329,10 +329,10 @@ def extract_json_from_output(output_text: str) -> Optional[Dict]:
     if not match:
         return None
     json_str = match.group(0).strip()
-    json_str = json_str.replace("'}", "}").replace("{'", "{")
-    json_str = json_str.replace("':", ":").replace(", '", ", ")
-    json_str = json_str.replace("['", "[").replace("']", "]")
-    json_str = re.sub(r",\s*([\}\]])", r"\1", json_str)
+    json_str = json_str.replace("'}", "\"}").replace("{'", "{\"")
+    json_str = json_str.replace("':", "\":").replace(", '", ", \"")
+    json_str = json_str.replace("['", "[\"").replace("']", "\"]")
+    json_str = re.sub(r",\s*([}\]])", r"\1", json_str)
     try:
         return json.loads(json_str)
     except json.JSONDecodeError:
@@ -398,7 +398,7 @@ def extract_with_rules(scene: Scene, episode: str = "") -> Dict:
     
     result = {
         "День": scene.day or "",
-        "Серия": f"Серия {episode_value}" if episode_value else episode,
+        "Серия": f"{episode_value}" if episode_value else episode,
         "Сцена": scene_number_value,
         "Объект": object_part,
         "Подобъект": subobject_part,
@@ -556,7 +556,7 @@ gc.collect()
 logger.info("Модель загружена!")
 
 
- @app.post("/analyze")
+@app.post("/analyze")
 async def analyze_script(file: UploadFile = File(...)):
     global stored_results
     if not file.filename.endswith('.docx'):
@@ -578,7 +578,7 @@ async def analyze_script(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка обработки: {str(e)}")
 
- @app.get("/result")
+@app.get("/result")
 async def get_result():
     global stored_results
     if stored_results is None:
@@ -586,7 +586,7 @@ async def get_result():
     print(stored_results)
     return JSONResponse(content=stored_results)
 
- @app.get("/health")
+@app.get("/health")
 async def health():
     return {"status": "ok"}
 
