@@ -13,16 +13,30 @@ from sqlalchemy.orm import Session
 from . import models
 
 
-def create_upload(
-    db: Session, filename: str, result_path: str, data_json: list
-) -> models.Upload:
-    """Insert a new upload entry into the database."""
+def initiate_upload(db: Session, filename: str) -> models.Upload:
+    """Insert a new upload entry with 'processing' status."""
     obj = models.Upload(
-        filename=filename, result_path=result_path, data_json=json.dumps(data_json)
+        filename=filename,
+        status="processing",
+        # result_path and data_json are nullable
     )
     db.add(obj)
     db.commit()
     db.refresh(obj)
+    return obj
+
+
+def update_upload_status_and_result(
+    db: Session, upload_id: int, status: str, result_path: Optional[str], data_json: Optional[dict]
+) -> Optional[models.Upload]:
+    """Updates the status and result of an existing upload entry."""
+    obj = get_upload(db, upload_id)
+    if obj:
+        obj.status = status
+        obj.result_path = result_path
+        obj.data_json = json.dumps(data_json) if data_json else None
+        db.commit()
+        db.refresh(obj)
     return obj
 
 

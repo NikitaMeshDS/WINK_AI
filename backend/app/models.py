@@ -23,6 +23,8 @@ class Upload(Base):
     filename = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     # Path on disk to the generated Excel file
-    result_path = Column(String, nullable=False)
+    result_path = Column(String, nullable=True)
     # JSON payload (as string) representing the table for quick access
-    data_json = Column(Text, nullable=False)
+    data_json = Column(Text, nullable=True)
+    # Processing status: processing, completed, failed
+    status = Column(String, nullable=False, default="processing")

@@ -22,10 +22,22 @@ class UploadResponse(BaseModel):
     """
 
     id: int
-    data: List[dict]
+    data: dict
 
     class Config:
-        orm_mode = True
+        from_attributes = True
+
+
+class UploadInitiatedResponse(BaseModel):
+    """
+    Response returned immediately after an upload is initiated.
+    Contains the database identifier and the initial status.
+    """
+    id: int
+    status: str
+
+    class Config:
+        from_attributes = True
 
 
 class UploadInfo(BaseModel):
@@ -34,9 +46,10 @@ class UploadInfo(BaseModel):
     id: int
     filename: str
     created_at: datetime
+    status: str
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class UploadDetail(BaseModel):
@@ -45,8 +58,9 @@ class UploadDetail(BaseModel):
     id: int
     filename: str
     created_at: datetime
-    data: List[dict]
-    download_url: str
+    status: str
+    data: Optional[dict] = None
+    download_url: Optional[str] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True

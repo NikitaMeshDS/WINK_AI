@@ -13,7 +13,7 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 # Docker the working directory is `/app`, so the database will be
 # created at `/app/app.db`.  For local development it will be
 # `project/backend/app.db`.
-SQLALCHEMY_DATABASE_URL = "sqlite:///./app.db"
+SQLALCHEMY_DATABASE_URL = "sqlite:///./data/app.db"
 
 # Disable thread check because FastAPI uses an async worker model
 # which can spawn multiple threads.
